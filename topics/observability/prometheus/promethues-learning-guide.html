@@ -1,0 +1,1254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prometheus: A Platform Engineer's Experimental Guide</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #22263a;
+    --border: #2e3354;
+    --orange: #e6522c;
+    --orange-light: #ff7043;
+    --blue: #4fc3f7;
+    --green: #66bb6a;
+    --yellow: #ffca28;
+    --purple: #ce93d8;
+    --red: #ef5350;
+    --text: #e0e0e0;
+    --text-dim: #90a4ae;
+    --code-bg: #0d1117;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    line-height: 1.7;
+    padding: 0;
+  }
+
+  .hero {
+    background: linear-gradient(135deg, #1a1d27 0%, #0f1117 60%, #1a0a00 100%);
+    border-bottom: 2px solid var(--orange);
+    padding: 60px 40px;
+    text-align: center;
+  }
+
+  .hero h1 {
+    font-size: 2.8em;
+    color: var(--orange);
+    margin-bottom: 12px;
+    letter-spacing: -1px;
+  }
+
+  .hero p {
+    font-size: 1.15em;
+    color: var(--text-dim);
+    max-width: 600px;
+    margin: 0 auto;
+  }
+
+  .hero .badge {
+    display: inline-block;
+    background: var(--orange);
+    color: #fff;
+    font-size: 0.75em;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 20px;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+
+  .container {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 40px 24px;
+  }
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--orange);
+    border-radius: 8px;
+    padding: 24px 28px;
+    margin-bottom: 48px;
+  }
+
+  .toc h2 { color: var(--orange); margin-bottom: 16px; font-size: 1em; text-transform: uppercase; letter-spacing: 1px; }
+  .toc ol { padding-left: 20px; }
+  .toc li { margin: 6px 0; }
+  .toc a { color: var(--blue); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+
+  h2.section-title {
+    font-size: 1.7em;
+    color: var(--orange);
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 10px;
+    margin: 60px 0 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  h2.section-title .num {
+    background: var(--orange);
+    color: #fff;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75em;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  h3 { color: var(--blue); margin: 28px 0 12px; font-size: 1.15em; }
+  h4 { color: var(--yellow); margin: 20px 0 8px; font-size: 1em; }
+
+  p { margin: 12px 0; }
+
+  a { color: var(--blue); }
+
+  pre, code {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-size: 0.88em;
+  }
+
+  code {
+    background: var(--code-bg);
+    color: var(--orange-light);
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    overflow-x: auto;
+    margin: 16px 0;
+    position: relative;
+  }
+
+  pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--text);
+  }
+
+  .label { color: var(--purple); }
+  .comment { color: #546e7a; font-style: italic; }
+  .string { color: var(--green); }
+  .keyword { color: var(--orange); }
+  .number { color: var(--yellow); }
+  .func { color: var(--blue); }
+
+  .experiment {
+    background: linear-gradient(135deg, #0d1f0d, #111a11);
+    border: 1px solid #2e5a2e;
+    border-left: 4px solid var(--green);
+    border-radius: 8px;
+    padding: 24px;
+    margin: 24px 0;
+  }
+
+  .experiment .exp-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .experiment .exp-icon {
+    font-size: 1.3em;
+  }
+
+  .experiment .exp-title {
+    color: var(--green);
+    font-weight: 700;
+    font-size: 1em;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .experiment .exp-subtitle {
+    color: #a5d6a7;
+    font-size: 0.85em;
+    margin-top: 2px;
+  }
+
+  .callout {
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 20px 0;
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+  }
+
+  .callout.info {
+    background: #0d1f2d;
+    border: 1px solid #1e4060;
+  }
+
+  .callout.warn {
+    background: #1f1a00;
+    border: 1px solid #5a4a00;
+  }
+
+  .callout.insight {
+    background: #1a0d2e;
+    border: 1px solid #4a2e6e;
+  }
+
+  .callout .icon { font-size: 1.2em; flex-shrink: 0; padding-top: 2px; }
+  .callout .content { flex: 1; }
+  .callout .content strong { display: block; margin-bottom: 4px; }
+
+  .callout.info strong { color: var(--blue); }
+  .callout.warn strong { color: var(--yellow); }
+  .callout.insight strong { color: var(--purple); }
+
+  .metric-type-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 20px 0;
+  }
+
+  .metric-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px;
+  }
+
+  .metric-card .mc-title {
+    font-weight: 700;
+    font-size: 0.9em;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+  }
+
+  .metric-card .mc-badge {
+    display: inline-block;
+    font-size: 0.7em;
+    padding: 2px 8px;
+    border-radius: 20px;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+
+  .counter .mc-title { color: var(--orange); }
+  .counter { border-left: 3px solid var(--orange); }
+  .counter .mc-badge { background: rgba(230,82,44,0.2); color: var(--orange); }
+
+  .gauge .mc-title { color: var(--blue); }
+  .gauge { border-left: 3px solid var(--blue); }
+  .gauge .mc-badge { background: rgba(79,195,247,0.2); color: var(--blue); }
+
+  .histogram .mc-title { color: var(--purple); }
+  .histogram { border-left: 3px solid var(--purple); }
+  .histogram .mc-badge { background: rgba(206,147,216,0.2); color: var(--purple); }
+
+  .summary .mc-title { color: var(--yellow); }
+  .summary { border-left: 3px solid var(--yellow); }
+  .summary .mc-badge { background: rgba(255,202,40,0.2); color: var(--yellow); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 0.9em;
+  }
+
+  th {
+    background: var(--surface2);
+    color: var(--text-dim);
+    text-transform: uppercase;
+    font-size: 0.8em;
+    letter-spacing: 0.5px;
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 2px solid var(--border);
+  }
+
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  tr:hover td {
+    background: var(--surface2);
+  }
+
+  .promql-box {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 12px 0;
+    overflow: hidden;
+  }
+
+  .promql-box .pq-label {
+    background: var(--surface2);
+    padding: 6px 14px;
+    font-size: 0.75em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .promql-box .pq-label span { color: var(--orange); font-weight: 700; }
+  .promql-box .pq-code { padding: 16px 18px; font-family: monospace; font-size: 0.95em; color: var(--text); line-height: 1.6; }
+
+  .architecture-diagram {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    margin: 20px 0;
+    font-family: monospace;
+    font-size: 0.85em;
+    overflow-x: auto;
+    white-space: pre;
+    color: var(--text-dim);
+    line-height: 1.5;
+  }
+
+  .arch-orange { color: var(--orange); }
+  .arch-blue { color: var(--blue); }
+  .arch-green { color: var(--green); }
+
+  .step-list {
+    list-style: none;
+    padding: 0;
+    margin: 12px 0;
+    counter-reset: steps;
+  }
+
+  .step-list li {
+    counter-increment: steps;
+    padding: 8px 0 8px 48px;
+    position: relative;
+    border-bottom: 1px dashed var(--border);
+  }
+
+  .step-list li:last-child { border-bottom: none; }
+
+  .step-list li::before {
+    content: counter(steps);
+    position: absolute;
+    left: 0;
+    top: 8px;
+    background: var(--orange);
+    color: #fff;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.8em;
+    line-height: 1;
+    text-align: center;
+    padding-top: 1px;
+  }
+
+  .checkpoint {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 20px 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .checkpoint::before {
+    content: "✓";
+    background: var(--green);
+    color: #000;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.85em;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .tag { display: inline-block; font-size: 0.75em; padding: 2px 8px; border-radius: 4px; margin-right: 4px; font-weight: 600; }
+  .tag.pe { background: rgba(230,82,44,0.2); color: var(--orange); }
+  .tag.gotcha { background: rgba(239,83,80,0.2); color: var(--red); }
+  .tag.tip { background: rgba(102,187,106,0.2); color: var(--green); }
+
+  footer {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-dim);
+    border-top: 1px solid var(--border);
+    font-size: 0.85em;
+    margin-top: 60px;
+  }
+
+  @media (max-width: 640px) {
+    .metric-type-grid { grid-template-columns: 1fr; }
+    .hero h1 { font-size: 2em; }
+  }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>🔥 Prometheus</h1>
+  <p style="margin-bottom:16px"><span class="badge">EXPERIMENTAL</span><span class="badge">PLATFORM ENGINEER</span></p>
+  <p>Learn how Prometheus actually works — not from slides, but by poking it with real queries, understanding its internals, and knowing what platform engineers know that developers don't.</p>
+</div>
+
+<div class="container">
+
+  <div class="toc">
+    <h2>📋 What We're Covering</h2>
+    <ol>
+      <li><a href="#s1">The Mental Model — What Prometheus Actually Is</a></li>
+      <li><a href="#s2">The Pull Model & How Scraping Works</a></li>
+      <li><a href="#s3">The Data Model — Time Series & Labels</a></li>
+      <li><a href="#s4">The 4 Metric Types — When & Why</a></li>
+      <li><a href="#s5">Port-Forward & Explore the Real Prometheus UI</a></li>
+      <li><a href="#s6">PromQL From First Principles</a></li>
+      <li><a href="#s7">Storage — How Prometheus Stores Data (TSDB)</a></li>
+      <li><a href="#s8">Cardinality — The Platform Engineer's #1 Concern</a></li>
+      <li><a href="#s9">Recording Rules & Alerts</a></li>
+      <li><a href="#s10">Platform Engineer Mental Checklist</a></li>
+    </ol>
+  </div>
+
+  <!-- ===================== SECTION 1 ===================== -->
+  <h2 class="section-title" id="s1"><span class="num">1</span> The Mental Model — What Prometheus Actually Is</h2>
+
+  <p>Before touching any UI, get this picture burned into your brain. Everything else falls out of it.</p>
+
+  <div class="architecture-diagram">
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │                    Your Kubernetes Cluster                          │
+  │                                                                     │
+  │  ┌──────────────┐   ┌──────────────┐   ┌──────────────────────┐   │
+  │  │  app-pod-1   │   │  app-pod-2   │   │  node-exporter       │   │
+  │  │  :8080/metrics│   │  :8080/metrics│   │  :9100/metrics       │   │
+  │  └──────┬───────┘   └──────┬───────┘   └──────────┬───────────┘   │
+  │         │                  │                        │               │
+  │         └──────────────────┴────────────────────────┘               │
+  │                            ▲  ← Prometheus SCRAPES (HTTP GET)       │
+  │                            │                                        │
+  │  ┌─────────────────────────┴──────────────────────────────────┐    │
+  │  │                   PROMETHEUS SERVER                         │    │
+  │  │                                                             │    │
+  │  │  ┌─────────────┐  ┌───────────────┐  ┌─────────────────┐  │    │
+  │  │  │   Scraper   │→ │  TSDB         │← │   PromQL Engine  │  │    │
+  │  │  │  (Retrieval)│  │  (Time Series │  │                 │  │    │
+  │  │  │             │  │   Database)   │  └────────┬────────┘  │    │
+  │  │  └─────────────┘  └───────────────┘           │           │    │
+  │  │                                                ▼           │    │
+  │  │                                     ┌──────────────────┐  │    │
+  │  │                                     │   HTTP API       │  │    │
+  │  │                                     │   :9090          │  │    │
+  │  │                                     └─────────┬────────┘  │    │
+  │  └─────────────────────────────────────────────── │ ─────────┘    │
+  │                                                    │               │
+  └────────────────────────────────────────────────────│───────────────┘
+                                                       ▼
+                                               You (via Grafana
+                                               or UI or API)
+  </div>
+
+  <div class="callout insight">
+    <div class="icon">🧠</div>
+    <div class="content">
+      <strong>The Key Insight</strong>
+      Prometheus is fundamentally different from push-based monitoring (like StatsD, Datadog Agent, etc.). <strong>Prometheus goes and asks your apps for their metrics on a schedule</strong>. Your apps don't send anything — they just expose an HTTP endpoint. This single design decision has huge implications for reliability, authentication, and how you think about monitoring.
+    </div>
+  </div>
+
+  <h3>Why Pull vs Push Matters (Platform Engineer POV)</h3>
+
+  <table>
+    <tr><th>Aspect</th><th>Pull (Prometheus)</th><th>Push (StatsD/Datadog)</th></tr>
+    <tr><td>Who controls scrape rate</td><td>Prometheus (you)</td><td>App (them)</td></tr>
+    <tr><td>App goes down</td><td>Prometheus detects it (target down)</td><td>You notice gaps in data</td></tr>
+    <tr><td>Network issue</td><td>Clear error: scrape failed</td><td>Silently lose data</td></tr>
+    <tr><td>No metrics for 5 min</td><td>Target down alert fires</td><td>Was it down or just not pushing?</td></tr>
+    <tr><td>Cardinality explosion</td><td>You can see it coming (target count × labels)</td><td>Hits you like a bill at end of month</td></tr>
+  </table>
+
+  <!-- ===================== SECTION 2 ===================== -->
+  <h2 class="section-title" id="s2"><span class="num">2</span> The Pull Model & How Scraping Works</h2>
+
+  <p>Scraping is the heartbeat of Prometheus. Every <code>scrape_interval</code> seconds (default 15s), Prometheus does an HTTP GET to each configured target's <code>/metrics</code> endpoint and ingests whatever it gets back.</p>
+
+  <h3>What the /metrics Endpoint Actually Looks Like</h3>
+
+  <p>This is the raw text format your apps expose. It's dead simple by design — a text file Prometheus can parse in milliseconds:</p>
+
+  <pre><code><span class="comment"># HELP http_requests_total The total number of HTTP requests.</span>
+<span class="comment"># TYPE http_requests_total counter</span>
+<span class="label">http_requests_total{method="post",code="200"}</span> <span class="number">1027</span> <span class="number">1395066363000</span>
+<span class="label">http_requests_total{method="post",code="400"}</span> <span class="number">3</span> <span class="number">1395066363000</span>
+<span class="label">http_requests_total{method="get",code="200"}</span> <span class="number">10892</span> <span class="number">1395066363000</span>
+
+<span class="comment"># HELP process_resident_memory_bytes Resident memory size in bytes.</span>
+<span class="comment"># TYPE process_resident_memory_bytes gauge</span>
+<span class="label">process_resident_memory_bytes</span> <span class="number">1.5556352e+07</span>
+
+<span class="comment"># HELP http_request_duration_seconds A histogram of request latencies.</span>
+<span class="comment"># TYPE http_request_duration_seconds histogram</span>
+<span class="label">http_request_duration_seconds_bucket{le="0.05"}</span> <span class="number">24054</span>
+<span class="label">http_request_duration_seconds_bucket{le="0.1"}</span>  <span class="number">33444</span>
+<span class="label">http_request_duration_seconds_bucket{le="0.25"}</span> <span class="number">100392</span>
+<span class="label">http_request_duration_seconds_bucket{le="+Inf"}</span> <span class="number">144320</span>
+<span class="label">http_request_duration_seconds_sum</span>               <span class="number">53423</span>
+<span class="label">http_request_duration_seconds_count</span>             <span class="number">144320</span></code></pre>
+
+  <div class="callout info">
+    <div class="icon">💡</div>
+    <div class="content">
+      <strong>Format Rule</strong>
+      Each line is: <code>metric_name{label="value"} number [optional_timestamp]</code>. The timestamp is usually omitted — Prometheus uses its own scrape time. If an app provides timestamps, Prometheus uses them (but this can cause issues — platform engineers usually disable this).
+    </div>
+  </div>
+
+  <h3>Service Discovery — How Prometheus Finds Targets</h3>
+
+  <p>In Kubernetes, you almost never hardcode targets. Prometheus uses <strong>ServiceMonitors</strong> (Prometheus Operator) or native Kubernetes SD to discover what to scrape dynamically.</p>
+
+  <pre><code><span class="comment"># In prometheus.yml (or via ServiceMonitor CRD)</span>
+<span class="keyword">scrape_configs</span>:
+  - <span class="keyword">job_name</span>: <span class="string">'kubernetes-pods'</span>
+    <span class="keyword">kubernetes_sd_configs</span>:
+      - <span class="keyword">role</span>: pod
+    <span class="keyword">relabel_configs</span>:
+      <span class="comment"># Only scrape pods with this annotation</span>
+      - <span class="keyword">source_labels</span>: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        <span class="keyword">action</span>: keep
+        <span class="keyword">regex</span>: <span class="string">true</span>
+      <span class="comment"># Use the port annotation to set the path</span>
+      - <span class="keyword">source_labels</span>: [__meta_kubernetes_pod_annotation_prometheus_io_port]
+        <span class="keyword">action</span>: replace
+        <span class="keyword">target_label</span>: __address__
+        <span class="keyword">regex</span>: (.+)
+        <span class="keyword">replacement</span>: <span class="string">'${1}'</span></code></pre>
+
+  <div class="callout warn">
+    <div class="icon">⚠️</div>
+    <div class="content">
+      <strong>Relabeling Is Where the Magic (and Pain) Lives</strong>
+      <code>relabel_configs</code> run BEFORE scraping and let you filter targets, rename labels, drop things. <code>metric_relabel_configs</code> run AFTER scraping and let you drop metrics or rewrite labels. As a platform engineer, you'll spend real time in here tuning what gets scraped and what gets dropped to control costs.
+    </div>
+  </div>
+
+  <!-- ===================== SECTION 3 ===================== -->
+  <h2 class="section-title" id="s3"><span class="num">3</span> The Data Model — Time Series & Labels</h2>
+
+  <p>This is the most important concept to deeply understand. Get this wrong, and you'll build confusing dashboards and expensive cardinality issues.</p>
+
+  <h3>What is a Time Series?</h3>
+
+  <p>A <strong>time series</strong> is a unique combination of a metric name and a set of key-value labels. Think of it as a stream of (timestamp, value) pairs that flows through time.</p>
+
+  <pre><code><span class="comment"># This is ONE time series:</span>
+<span class="label">http_requests_total{job="api-server", instance="10.0.0.1:8080", method="GET", status="200"}</span>
+
+<span class="comment"># This is a DIFFERENT time series (different label value):</span>
+<span class="label">http_requests_total{job="api-server", instance="10.0.0.1:8080", method="GET", status="500"}</span>
+
+<span class="comment"># This is ALSO different (different instance):</span>
+<span class="label">http_requests_total{job="api-server", instance="10.0.0.2:8080", method="GET", status="200"}</span></code></pre>
+
+  <div class="callout insight">
+    <div class="icon">🧠</div>
+    <div class="content">
+      <strong>Platform Engineer Mental Model</strong>
+      <strong>Every unique label combination = one time series = storage + memory cost.</strong>
+      If you have 100 pods and each exposes a metric with {method, status_code} where method has 5 values and status has 10 values, that's 100 × 5 × 10 = 5,000 time series just for that one metric. Labels that have unbounded values (user_id, request_id, trace_id) will destroy your Prometheus.
+    </div>
+  </div>
+
+  <h3>Labels: Two Kinds That Platform Engineers Track</h3>
+
+  <table>
+    <tr><th>Label Kind</th><th>Where It Comes From</th><th>Example</th></tr>
+    <tr><td><strong>Target labels</strong></td><td>Prometheus adds during scrape (relabeling)</td><td><code>job</code>, <code>instance</code>, <code>namespace</code>, <code>pod</code></td></tr>
+    <tr><td><strong>Metric labels</strong></td><td>The app itself exports in /metrics</td><td><code>method</code>, <code>status_code</code>, <code>route</code></td></tr>
+  </table>
+
+  <div class="callout warn">
+    <div class="icon">⚠️</div>
+    <div class="content">
+      <strong>The Label Collision Trap</strong>
+      If a metric exported by an app has a label called <code>job</code>, and Prometheus also wants to add its own <code>job</code> label from service discovery, there's a collision. Prometheus renames the app's one to <code>exported_job</code>. Confusing! Watch for this in dashboards showing up as <code>exported_*</code> labels.
+    </div>
+  </div>
+
+  <!-- ===================== SECTION 4 ===================== -->
+  <h2 class="section-title" id="s4"><span class="num">4</span> The 4 Metric Types</h2>
+
+  <p>There are exactly 4 types. Understanding <em>when</em> to use each is what separates a platform engineer from someone who just copies examples.</p>
+
+  <div class="metric-type-grid">
+    <div class="metric-card counter">
+      <div class="mc-title">Counter <span class="mc-badge">Always Goes Up</span></div>
+      <p style="font-size:0.9em;color:var(--text-dim)">A cumulative value that only ever increases (or resets to 0 on restart). You never ask "what is the counter?", you ask "how fast is it increasing?"</p>
+      <p style="font-size:0.85em;margin-top:8px"><strong>Use for:</strong> requests served, errors, bytes sent, tasks completed</p>
+      <p style="font-size:0.85em;color:#ef9a9a;margin-top:4px"><strong>Never use for:</strong> things that can go down (memory, connections)</p>
+    </div>
+
+    <div class="metric-card gauge">
+      <div class="mc-title">Gauge <span class="mc-badge">Goes Up & Down</span></div>
+      <p style="font-size:0.9em;color:var(--text-dim)">A value that can go up or down. You ask "what is it right now?"</p>
+      <p style="font-size:0.85em;margin-top:8px"><strong>Use for:</strong> memory usage, active connections, queue depth, CPU usage, temperature</p>
+      <p style="font-size:0.85em;color:#a5d6a7;margin-top:4px"><strong>Good for:</strong> anything you'd read off an instrument panel right now</p>
+    </div>
+
+    <div class="metric-card histogram">
+      <div class="mc-title">Histogram <span class="mc-badge">Distributions</span></div>
+      <p style="font-size:0.9em;color:var(--text-dim)">Samples observations into configurable buckets. Gives you counts per bucket, sum, and total count. Good for latency. Buckets are defined at instrumentation time.</p>
+      <p style="font-size:0.85em;margin-top:8px"><strong>Use for:</strong> request duration, response sizes — anything where you care about percentiles</p>
+      <p style="font-size:0.85em;color:#ce93d8;margin-top:4px"><strong>PE concern:</strong> Each bucket = a time series. 10 buckets × 100 pods = 1000 series.</p>
+    </div>
+
+    <div class="metric-card summary">
+      <div class="mc-title">Summary <span class="mc-badge">Pre-computed Quantiles</span></div>
+      <p style="font-size:0.9em;color:var(--text-dim)">Like a histogram but the app computes quantiles itself. More accurate but cannot be aggregated across instances — each instance is independent.</p>
+      <p style="font-size:0.85em;margin-top:8px"><strong>Use for:</strong> single-instance services where you need accurate quantiles without cross-instance aggregation</p>
+      <p style="font-size:0.85em;color:#ffcc80;margin-top:4px"><strong>PE concern:</strong> You CANNOT average p99 across pods with summary. Use histogram instead.</p>
+    </div>
+  </div>
+
+  <div class="callout insight">
+    <div class="icon">🔬</div>
+    <div class="content">
+      <strong>Histogram Deep Dive — What You're Actually Storing</strong>
+      When an app uses a histogram with buckets [0.05, 0.1, 0.25, 0.5, 1], every observation gets counted into all buckets it fits into. Bucket counts are cumulative (le="+Inf" always equals total count). This is what lets you compute percentiles in PromQL later with <code>histogram_quantile()</code>.
+    </div>
+  </div>
+
+  <!-- ===================== SECTION 5 ===================== -->
+  <h2 class="section-title" id="s5"><span class="num">5</span> Port-Forward & Explore the Real Prometheus UI</h2>
+
+  <p>Theory is now over. Let's open Prometheus and start poking around. Every experiment below can be done directly in the Prometheus expression browser.</p>
+
+  <h3>Step 1: Port-Forward Prometheus</h3>
+
+  <pre><code><span class="comment"># Find your Prometheus pod (common names)</span>
+kubectl get pods -n monitoring | grep prometheus
+kubectl get pods -A | grep prometheus
+
+<span class="comment"># Common ones:</span>
+kubectl port-forward -n monitoring svc/prometheus-operated 9090:9090
+kubectl port-forward -n monitoring pod/prometheus-prometheus-0 9090:9090
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
+
+<span class="comment"># Then open: http://localhost:9090</span></code></pre>
+
+  <h3>The Three Most Important Pages to Understand</h3>
+
+  <table>
+    <tr><th>URL</th><th>What It Shows</th><th>Platform Engineer Use</th></tr>
+    <tr><td><code>/graph</code></td><td>PromQL expression browser</td><td>Your main lab</td></tr>
+    <tr><td><code>/targets</code></td><td>All scrape targets + status</td><td>Debug why metrics aren't coming in</td></tr>
+    <tr><td><code>/tsdb-status</code></td><td>Cardinality stats, top series</td><td>Find what's eating your storage</td></tr>
+    <tr><td><code>/config</code></td><td>Active scrape config</td><td>Verify what's actually loaded</td></tr>
+    <tr><td><code>/rules</code></td><td>Recording + alert rules</td><td>Debug alert evaluation</td></tr>
+    <tr><td><code>/alerts</code></td><td>Firing alerts</td><td>Current alert state</td></tr>
+    <tr><td><code>/api/v1/labels</code></td><td>All label names (JSON)</td><td>Explore what labels exist</td></tr>
+    <tr><td><code>/api/v1/series</code></td><td>All matching time series (JSON)</td><td>Count cardinality manually</td></tr>
+  </table>
+
+  <div class="experiment">
+    <div class="exp-header">
+      <div class="exp-icon">🧪</div>
+      <div>
+        <div class="exp-title">Experiment 1 — Find Out What Prometheus Is Scraping</div>
+        <div class="exp-subtitle">Go to http://localhost:9090/targets — do this before anything else</div>
+      </div>
+    </div>
+    <ol class="step-list">
+      <li>Open <code>http://localhost:9090/targets</code> — you'll see all scrape targets organized by job</li>
+      <li>Look at the <strong>State</strong> column — green = UP, red = DOWN</li>
+      <li>Click on any endpoint URL — this literally opens what Prometheus sees from that target (the raw /metrics text)</li>
+      <li>Note the <strong>Labels</strong> column — these are the labels Prometheus attaches to every metric from this target</li>
+      <li>Note <strong>Last Scrape</strong> and <strong>Scrape Duration</strong> — if duration is high (&gt;1s), that's a problem</li>
+    </ol>
+    <p style="color:#a5d6a7;margin-top:12px;font-size:0.9em">✅ What to notice: Every target that is UP is contributing metrics. Every target that is DOWN is creating <code>up{job="x", instance="y"} 0</code> — which is how Prometheus tracks health.</p>
+  </div>
+
+  <div class="experiment">
+    <div class="exp-header">
+      <div class="exp-icon">🧪</div>
+      <div>
+        <div class="exp-title">Experiment 2 — The up{} Metric (Prometheus's Own Health Check)</div>
+        <div class="exp-subtitle">Every scraped target gets an automatic up{} metric</div>
+      </div>
+    </div>
+    <p>Go to <code>http://localhost:9090/graph</code> and run these queries one by one:</p>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Query 1</span> Show all targets and whether they're up</div>
+      <div class="pq-code">up</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Query 2</span> Show only DOWN targets</div>
+      <div class="pq-code">up == 0</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Query 3</span> Count how many targets are up per job</div>
+      <div class="pq-code">count by (job) (up == 1)</div>
+    </div>
+
+    <p style="color:#a5d6a7;margin-top:12px;font-size:0.9em">✅ The <code>up</code> metric is the simplest and most important. <code>up == 0</code> means Prometheus tried to scrape and got nothing. It does NOT mean the app crashed — maybe the port is wrong, maybe /metrics doesn't exist on that path.</p>
+  </div>
+
+  <div class="experiment">
+    <div class="exp-header">
+      <div class="exp-icon">🧪</div>
+      <div>
+        <div class="exp-title">Experiment 3 — Explore What Metrics Actually Exist</div>
+        <div class="exp-subtitle">Don't stare at blank query boxes — discover what's there first</div>
+      </div>
+    </div>
+    <p>In the Prometheus UI expression box, start typing and watch the autocomplete. Also run these:</p>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>API call</span> Get all label names in your Prometheus</div>
+      <div class="pq-code">http://localhost:9090/api/v1/labels</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>API call</span> Get all metric names</div>
+      <div class="pq-code">http://localhost:9090/api/v1/label/__name__/values</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Query</span> How many time series total? (Run in Graph tab)</div>
+      <div class="pq-code">count({__name__=~".+"})</div>
+    </div>
+
+    <p style="color:#a5d6a7;margin-top:12px;font-size:0.9em">✅ That last query tells you the TOTAL number of active time series. This is the single most important number for understanding your Prometheus's load. Less than 100k = fine. 500k-1M = watch it. 2M+ = optimize urgently.</p>
+  </div>
+
+  <div class="experiment">
+    <div class="exp-header">
+      <div class="exp-icon">🧪</div>
+      <div>
+        <div class="exp-title">Experiment 4 — The TSDB Status Page (Platform Engineer Gold)</div>
+        <div class="exp-subtitle">Find what's actually consuming your storage and memory</div>
+      </div>
+    </div>
+    <p>Open <code>http://localhost:9090/tsdb-status</code>. This page shows you:</p>
+    <ol class="step-list">
+      <li><strong>Head Block</strong> — the in-memory data (last 2h). Series count here = your current memory usage</li>
+      <li><strong>Top 10 series by label value count</strong> — which metrics have the most unique time series. This is your cardinality map.</li>
+      <li><strong>Top 10 label names</strong> — which labels create the most unique values</li>
+      <li><strong>Chunks</strong> — compressed data blocks; higher chunk count = more historical data</li>
+    </ol>
+    <p style="color:#a5d6a7;margin-top:12px;font-size:0.9em">✅ When someone says "Prometheus is OOMKilling", you come here first. The top series by label value count will show you exactly which metric is the cardinality offender.</p>
+  </div>
+
+  <!-- ===================== SECTION 6 ===================== -->
+  <h2 class="section-title" id="s6"><span class="num">6</span> PromQL From First Principles</h2>
+
+  <p>PromQL is not SQL. It's a functional language that operates on sets of time series. Understanding its 4 data types is the unlock.</p>
+
+  <h3>PromQL's 4 Return Types</h3>
+
+  <table>
+    <tr><th>Type</th><th>What It Is</th><th>Example</th></tr>
+    <tr><td><strong>Instant Vector</strong></td><td>Set of time series, each with ONE value at current time</td><td><code>http_requests_total</code></td></tr>
+    <tr><td><strong>Range Vector</strong></td><td>Set of time series, each with a RANGE of values over time</td><td><code>http_requests_total[5m]</code></td></tr>
+    <tr><td><strong>Scalar</strong></td><td>A single number</td><td><code>1024</code></td></tr>
+    <tr><td><strong>String</strong></td><td>A string (rarely used)</td><td><code>"hello"</code></td></tr>
+  </table>
+
+  <div class="callout info">
+    <div class="icon">💡</div>
+    <div class="content">
+      <strong>The Core Rule</strong>
+      Functions like <code>rate()</code>, <code>increase()</code>, <code>avg_over_time()</code> take a <strong>Range Vector</strong> and return an <strong>Instant Vector</strong>. Most aggregation functions (<code>sum</code>, <code>avg</code>, <code>max</code>) take an <strong>Instant Vector</strong> and return an <strong>Instant Vector</strong>. This is why you write <code>rate(metric[5m])</code> not just <code>rate(metric)</code>.
+    </div>
+  </div>
+
+  <h3>The Most Important PromQL Functions — Platform Engineer Must-Knows</h3>
+
+  <div class="experiment">
+    <div class="exp-header">
+      <div class="exp-icon">🧪</div>
+      <div>
+        <div class="exp-title">Experiment 5 — rate() vs irate() vs increase()</div>
+        <div class="exp-subtitle">Understanding these is the single biggest PromQL skill gap</div>
+      </div>
+    </div>
+
+    <h4>rate() — Per-second rate, averaged over window</h4>
+    <div class="promql-box">
+      <div class="pq-label"><span>PromQL</span> HTTP request rate per second (averaged over 5 min)</div>
+      <div class="pq-code">rate(http_requests_total[5m])</div>
+    </div>
+    <p style="font-size:0.9em;color:var(--text-dim);margin-top:-8px">rate() looks at the first and last values in the window, calculates (last-first)/seconds. Smoothed. Good for dashboards and alerts. Handles counter resets automatically.</p>
+
+    <h4>irate() — Per-second rate, using only last two data points</h4>
+    <div class="promql-box">
+      <div class="pq-label"><span>PromQL</span> Instantaneous request rate (very spiky)</div>
+      <div class="pq-code">irate(http_requests_total[5m])</div>
+    </div>
+    <p style="font-size:0.9em;color:var(--text-dim);margin-top:-8px">irate() only uses the last 2 scrapes. Much more responsive but very noisy. Rarely used in practice — rate() is almost always better.</p>
+
+    <h4>increase() — Total increase over window</h4>
+    <div class="promql-box">
+      <div class="pq-label"><span>PromQL</span> Total HTTP requests in last 5 minutes</div>
+      <div class="pq-code">increase(http_requests_total[5m])</div>
+    </div>
+    <p style="font-size:0.9em;color:var(--text-dim);margin-top:-8px">increase(m[5m]) is literally rate(m[5m]) * 300. It's syntactic sugar. The value can be a non-integer because Prometheus extrapolates to fill partial windows.</p>
+
+    <div class="callout warn">
+      <div class="icon">⚠️</div>
+      <div class="content">
+        <strong>The Window Must Be Wider Than Scrape Interval</strong>
+        If your scrape_interval is 15s, your range window in rate() must be at least 2× that (30s minimum, 4× recommended = 1m). Rule of thumb: use at least 4 scrapes worth. For 15s scrapes, use <code>[1m]</code>. For 30s scrapes, use <code>[2m]</code>.
+      </div>
+    </div>
+  </div>
+
+  <div class="experiment">
+    <div class="exp-header">
+      <div class="exp-icon">🧪</div>
+      <div>
+        <div class="exp-title">Experiment 6 — Aggregation: The by() and without() Clauses</div>
+        <div class="exp-subtitle">This is how you go from per-pod metrics to cluster-wide views</div>
+      </div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Query 1</span> Total request rate across ALL pods (drops all labels)</div>
+      <div class="pq-code">sum(rate(http_requests_total[5m]))</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Query 2</span> Request rate grouped BY namespace (keep namespace label)</div>
+      <div class="pq-code">sum by (namespace) (rate(http_requests_total[5m]))</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Query 3</span> Request rate, keeping everything EXCEPT instance and pod labels</div>
+      <div class="pq-code">sum without (instance, pod) (rate(http_requests_total[5m]))</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Query 4</span> Error rate as a percentage (very common SLO query)</div>
+      <div class="pq-code">sum(rate(http_requests_total{status=~"5.."}[5m]))
+/
+sum(rate(http_requests_total[5m]))
+* 100</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Query 5</span> p99 latency using histogram_quantile</div>
+      <div class="pq-code">histogram_quantile(0.99,
+  sum by (le, job) (
+    rate(http_request_duration_seconds_bucket[5m])
+  )
+)</div>
+    </div>
+
+    <p style="color:#a5d6a7;margin-top:12px;font-size:0.9em">✅ Notice query 4 is a ratio — no units. This is the RIGHT way to do SLO queries. The <code>by (le)</code> in query 5 is REQUIRED for histogram_quantile — the <code>le</code> (less than or equal) label is what defines the bucket boundaries.</p>
+  </div>
+
+  <div class="experiment">
+    <div class="exp-header">
+      <div class="exp-icon">🧪</div>
+      <div>
+        <div class="exp-title">Experiment 7 — Label Matching & Joins</div>
+        <div class="exp-subtitle">PromQL can join metrics — like SQL but for time series</div>
+      </div>
+    </div>
+
+    <p>By default, binary operations between two instant vectors require matching labels. This is often surprising.</p>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Example</span> This FAILS if job/instance don't match exactly</div>
+      <div class="pq-code">metric_a / metric_b</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Example</span> Ignore non-matching labels for the operation</div>
+      <div class="pq-code">metric_a / ignoring(pod, instance) metric_b</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Real example</span> Container memory usage as % of limit</div>
+      <div class="pq-code">container_memory_working_set_bytes
+  / ignoring(resource)
+kube_pod_container_resource_limits{resource="memory"}
+* 100</div>
+    </div>
+
+    <p style="color:#a5d6a7;margin-top:12px;font-size:0.9em">✅ Label matching in binary ops is one of the trickiest parts of PromQL. When you get "vector matching must be bijective" errors, it means multiple time series on one side match one on the other. Use <code>group_left</code> or <code>group_right</code> for many-to-one joins.</p>
+  </div>
+
+  <div class="experiment">
+    <div class="exp-header">
+      <div class="exp-icon">🧪</div>
+      <div>
+        <div class="exp-title">Experiment 8 — Explore Prometheus's Own Metrics</div>
+        <div class="exp-subtitle">Prometheus monitors itself — use this to understand its health</div>
+      </div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Query 1</span> How many samples Prometheus ingests per second</div>
+      <div class="pq-code">rate(prometheus_tsdb_head_samples_appended_total[5m])</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Query 2</span> Current number of active time series (the cardinality number)</div>
+      <div class="pq-code">prometheus_tsdb_head_series</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Query 3</span> How long scrapes are taking (detect slow targets)</div>
+      <div class="pq-code">topk(10, scrape_duration_seconds)</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Query 4</span> Failed scrapes in last 5 min (things Prometheus couldn't reach)</div>
+      <div class="pq-code">increase(scrape_samples_scraped[5m]) == 0</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Query 5</span> Prometheus WAL replay time (how long startup takes)</div>
+      <div class="pq-code">prometheus_tsdb_wal_replay_duration_seconds</div>
+    </div>
+
+    <p style="color:#a5d6a7;margin-top:12px;font-size:0.9em">✅ <code>prometheus_tsdb_head_series</code> is your north star metric for Prometheus health. If this keeps growing without bound, you have a cardinality issue. It should be relatively stable or slowly growing.</p>
+  </div>
+
+  <!-- ===================== SECTION 7 ===================== -->
+  <h2 class="section-title" id="s7"><span class="num">7</span> Storage — How Prometheus Stores Data (TSDB)</h2>
+
+  <p>Understanding storage helps you debug OOMKills, slow queries, and data loss — classic platform engineer problems.</p>
+
+  <h3>The Memory + Disk Architecture</h3>
+
+  <pre><code>Time →
+
+  [      HEAD BLOCK          ] [   TSDB Blocks on Disk   ]
+  [  Last 2 hours, in RAM    ] [ 2h  ][ 2h  ][ 24h ][ 7d ]
+  [  New data written to WAL ] [compressed, immutable     ]
+       ↑                           ↑
+   Scrapes go here         Compacted periodically
+   (very fast writes)      (read is slower but fine)</code></pre>
+
+  <table>
+    <tr><th>Component</th><th>Location</th><th>Duration</th><th>Platform Engineer Concern</th></tr>
+    <tr><td><strong>WAL</strong> (Write-Ahead Log)</td><td>Disk</td><td>Truncated every 2h</td><td>WAL corruption = data loss. Don't cut Prometheus power.</td></tr>
+    <tr><td><strong>Head Block</strong></td><td>RAM</td><td>Last ~2h of data</td><td>Memory = series count × labels. Cardinality kills here.</td></tr>
+    <tr><td><strong>Chunks</strong></td><td>Disk</td><td>Per block</td><td>Each block is 2h. Compacted to 24h, then 7d blocks.</td></tr>
+    <tr><td><strong>Index</strong></td><td>Disk (+ RAM cache)</td><td>Per block</td><td>Large index = slow label queries. Kept small by retention.</td></tr>
+  </table>
+
+  <div class="callout warn">
+    <div class="icon">⚠️</div>
+    <div class="content">
+      <strong>Why Prometheus OOMKills</strong>
+      The head block is in RAM. When cardinality explodes (new label combinations keep appearing), more and more time series get created. Each series needs memory for its labels and chunk data. With 2M active series, you can need 8-16GB of RAM just for the head block. This is why cardinality management is a platform engineer's core skill.
+    </div>
+  </div>
+
+  <h3>Retention and Disk Sizing</h3>
+
+  <pre><code><span class="comment"># Prometheus configuration (storage settings)</span>
+<span class="comment"># Default retention: 15 days</span>
+--storage.tsdb.retention.time=30d
+--storage.tsdb.retention.size=100GB  <span class="comment"># whichever hits first</span>
+
+<span class="comment"># Rule of thumb for disk sizing:</span>
+<span class="comment"># disk_needed = retention_seconds × ingestion_rate_samples_per_second × bytes_per_sample</span>
+<span class="comment"># bytes_per_sample ≈ 1-2 bytes (Prometheus uses excellent compression via XOR encoding)</span>
+<span class="comment"># Example: 15d × 86400s × 500k samples/s × 1.5 bytes ≈ ~970GB</span></code></pre>
+
+  <div class="experiment">
+    <div class="exp-header">
+      <div class="exp-icon">🧪</div>
+      <div>
+        <div class="exp-title">Experiment 9 — Check Your Prometheus's Storage Stats</div>
+        <div class="exp-subtitle">These are real metrics from your running Prometheus</div>
+      </div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Query</span> How much disk Prometheus is using (bytes)</div>
+      <div class="pq-code">prometheus_tsdb_storage_blocks_bytes</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Query</span> Current WAL size</div>
+      <div class="pq-code">prometheus_tsdb_wal_storage_size_bytes</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Query</span> How old is your oldest data?</div>
+      <div class="pq-code">(time() - prometheus_tsdb_head_min_time_seconds) / 86400</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Query</span> Samples ingestion rate right now</div>
+      <div class="pq-code">rate(prometheus_tsdb_head_samples_appended_total[5m])</div>
+    </div>
+  </div>
+
+  <!-- ===================== SECTION 8 ===================== -->
+  <h2 class="section-title" id="s8"><span class="num">8</span> Cardinality — The Platform Engineer's #1 Concern</h2>
+
+  <p>Cardinality is the number of unique time series. It is THE metric you manage as a platform engineer. Low cardinality = happy Prometheus. High cardinality = OOMKills and $$$.</p>
+
+  <h3>How Cardinality Explodes (Real Examples)</h3>
+
+  <pre><code><span class="comment"># GOOD: bounded labels</span>
+<span class="label">http_requests_total{method="GET", status="200", service="api"}</span>
+<span class="comment"># method: ~5 values, status: ~10 values, service: ~20 services</span>
+<span class="comment"># = 5 × 10 × 20 = 1,000 series. Totally fine.</span>
+
+<span class="comment"># BAD: unbounded label</span>
+<span class="label">http_requests_total{user_id="u-28374", path="/api/users/28374/settings"}</span>
+<span class="comment"># user_id: millions of values × path: millions of paths</span>
+<span class="comment"># = millions of series. Prometheus explodes.</span>
+
+<span class="comment"># ALSO BAD: high-entropy labels</span>
+<span class="label">http_requests_total{trace_id="abc-def-123-456"}</span>
+<span class="comment"># Every request gets a new trace_id = new time series = instant cardinality bomb</span></code></pre>
+
+  <div class="experiment">
+    <div class="exp-header">
+      <div class="exp-icon">🧪</div>
+      <div>
+        <div class="exp-title">Experiment 10 — Cardinality Investigation (Platform Engineer Workflow)</div>
+        <div class="exp-subtitle">This is what you do when someone says "Prometheus is slow/OOMing"</div>
+      </div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Step 1</span> Which metric name has the most time series?</div>
+      <div class="pq-code">topk(10,
+  count by (__name__) ({__name__=~".+"})
+)</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Step 2</span> For a specific metric, which label has highest cardinality?</div>
+      <div class="pq-code">count by (label_name_here) (some_metric_name)</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Step 3</span> Count series per job (find the noisy jobs)</div>
+      <div class="pq-code">count by (job) ({__name__=~".+"})</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Step 4</span> Also check the TSDB status page directly</div>
+      <div class="pq-code">http://localhost:9090/tsdb-status</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Step 5</span> Drop high-cardinality labels via metric_relabel_configs</div>
+      <div class="pq-code"><span class="comment"># In your scrape config / ServiceMonitor:</span>
+<span class="keyword">metric_relabel_configs</span>:
+  - <span class="keyword">source_labels</span>: [__name__]
+    <span class="keyword">regex</span>: <span class="string">'high_cardinality_metric_name'</span>
+    <span class="keyword">action</span>: drop
+
+  <span class="comment"># Or drop a specific label from all metrics:</span>
+  - <span class="keyword">regex</span>: <span class="string">'user_id|trace_id|request_id'</span>
+    <span class="keyword">action</span>: labeldrop</div>
+    </div>
+
+    <p style="color:#a5d6a7;margin-top:12px;font-size:0.9em">✅ The <code>labeldrop</code> action removes a label from all scraped metrics. The <code>drop</code> action removes entire metric series. These are your main tools for cardinality control.</p>
+  </div>
+
+  <!-- ===================== SECTION 9 ===================== -->
+  <h2 class="section-title" id="s9"><span class="num">9</span> Recording Rules & Alerts</h2>
+
+  <h3>Recording Rules — Pre-compute Expensive Queries</h3>
+
+  <p>Some PromQL queries are expensive. Recording rules run them on a schedule and store the result as a new metric. Dashboards then query the pre-computed metric instead of recomputing it constantly.</p>
+
+  <pre><code><span class="comment"># recording_rules.yml</span>
+<span class="keyword">groups</span>:
+  - <span class="keyword">name</span>: <span class="string">http_request_rates</span>
+    <span class="keyword">interval</span>: <span class="string">30s</span>
+    <span class="keyword">rules</span>:
+      <span class="comment"># This expensive query runs every 30s and is stored as a new metric</span>
+      - <span class="keyword">record</span>: <span class="string">job:http_requests:rate5m</span>
+        <span class="keyword">expr</span>: <span class="string">sum by (job) (rate(http_requests_total[5m]))</span>
+
+      - <span class="keyword">record</span>: <span class="string">job:http_errors:rate5m</span>
+        <span class="keyword">expr</span>: <span class="string">sum by (job) (rate(http_requests_total{status=~"5.."}[5m]))</span>
+
+      <span class="comment"># Ratio (SLO burn rate) computed once, queried many times</span>
+      - <span class="keyword">record</span>: <span class="string">job:http_error_ratio:rate5m</span>
+        <span class="keyword">expr</span>: <span class="string">job:http_errors:rate5m / job:http_requests:rate5m</span></code></pre>
+
+  <div class="callout info">
+    <div class="icon">💡</div>
+    <div class="content">
+      <strong>Naming Convention</strong>
+      Recording rules follow the pattern <code>level:metric:operations</code>. Example: <code>job:http_requests:rate5m</code> means "aggregated at the job level, based on http_requests, using rate over 5m". This is a convention, not enforced by Prometheus, but everyone uses it.
+    </div>
+  </div>
+
+  <h3>Alerting Rules</h3>
+
+  <pre><code><span class="keyword">groups</span>:
+  - <span class="keyword">name</span>: slo_alerts
+    <span class="keyword">rules</span>:
+      - <span class="keyword">alert</span>: <span class="string">HighErrorRate</span>
+        <span class="keyword">expr</span>: <span class="string">job:http_error_ratio:rate5m > 0.01</span>  <span class="comment"># &gt;1% errors</span>
+        <span class="keyword">for</span>: <span class="string">5m</span>  <span class="comment"># Must be true for 5 min before firing</span>
+        <span class="keyword">labels</span>:
+          <span class="keyword">severity</span>: <span class="string">critical</span>
+          <span class="keyword">team</span>: <span class="string">platform</span>
+        <span class="keyword">annotations</span>:
+          <span class="keyword">summary</span>: <span class="string">"High error rate on {{ $labels.job }}"</span>
+          <span class="keyword">description</span>: <span class="string">"Error rate is {{ $value | humanizePercentage }} for job {{ $labels.job }}"</span>
+          <span class="keyword">runbook_url</span>: <span class="string">"https://wiki.company.com/runbooks/high-error-rate"</span>
+
+      - <span class="keyword">alert</span>: <span class="string">PrometheusTargetDown</span>
+        <span class="keyword">expr</span>: <span class="string">up == 0</span>
+        <span class="keyword">for</span>: <span class="string">2m</span>
+        <span class="keyword">labels</span>:
+          <span class="keyword">severity</span>: <span class="string">warning</span>
+        <span class="keyword">annotations</span>:
+          <span class="keyword">summary</span>: <span class="string">"Target {{ $labels.job }}/{{ $labels.instance }} is down"</span></code></pre>
+
+  <div class="experiment">
+    <div class="exp-header">
+      <div class="exp-icon">🧪</div>
+      <div>
+        <div class="exp-title">Experiment 11 — Explore Alerts in Your Prometheus</div>
+        <div class="exp-subtitle">See what alerts exist and what state they're in</div>
+      </div>
+    </div>
+
+    <ol class="step-list">
+      <li>Open <code>http://localhost:9090/alerts</code> — see all defined alerts and their state</li>
+      <li>Alert states: <strong>Inactive</strong> (expr is false), <strong>Pending</strong> (expr true but "for" not expired), <strong>Firing</strong> (expr true AND "for" expired)</li>
+      <li>Open <code>http://localhost:9090/rules</code> — see all recording rules AND alert rules and when they last evaluated</li>
+      <li>Click on any alert name to open its expression in the graph browser — query it yourself to see what the current value is</li>
+    </ol>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Useful</span> Find alerts that are currently pending (about to fire)</div>
+      <div class="pq-code">ALERTS{alertstate="pending"}</div>
+    </div>
+
+    <div class="promql-box">
+      <div class="pq-label"><span>Useful</span> Find all firing alerts</div>
+      <div class="pq-code">ALERTS{alertstate="firing"}</div>
+    </div>
+
+    <p style="color:#a5d6a7;margin-top:12px;font-size:0.9em">✅ The <code>ALERTS</code> metric is a synthetic metric that Prometheus creates for every evaluated alert rule. Platform engineers query this to understand alert state, build dashboards of alert health, or route alerts programmatically.</p>
+  </div>
+
+  <!-- ===================== SECTION 10 ===================== -->
+  <h2 class="section-title" id="s10"><span class="num">10</span> Platform Engineer Mental Checklist</h2>
+
+  <p>This is what you think about in every Prometheus-related conversation or incident:</p>
+
+  <h3>When Someone Says "Prometheus Is Slow"</h3>
+  <ol class="step-list">
+    <li>Check <code>prometheus_tsdb_head_series</code> — cardinality too high?</li>
+    <li>Check <code>topk(10, scrape_duration_seconds)</code> — slow targets causing scrape timeouts?</li>
+    <li>Check <code>/tsdb-status</code> — which metrics are cardinality offenders?</li>
+    <li>Check if expensive queries are being run without recording rules (look at query logs)</li>
+    <li>Check <code>prometheus_engine_query_duration_seconds</code> — slow PromQL evaluation?</li>
+  </ol>
+
+  <h3>When Someone Says "I'm Not Getting Metrics"</h3>
+  <ol class="step-list">
+    <li>Go to <code>/targets</code> — is the target even there? If not, check ServiceMonitor/scrape config</li>
+    <li>If target is DOWN — curl the metrics endpoint manually to verify it works</li>
+    <li>Check <code>up{job="the-job"}</code> in the query browser</li>
+    <li>Check if there's a <code>metric_relabel_config</code> dropping the metric you need</li>
+    <li>Check if scrape_timeout is too short for a slow target</li>
+  </ol>
+
+  <h3>When Someone Says "Add a New Metric"</h3>
+  <ol class="step-list">
+    <li>Ask: what type? (counter for rates, gauge for current state, histogram for distributions)</li>
+    <li>Ask: what labels? Are any labels unbounded? (user_id, trace_id = danger)</li>
+    <li>Estimate cardinality: pods × label_combinations — is it acceptable?</li>
+    <li>Check if a recording rule should pre-aggregate it for dashboards</li>
+    <li>Verify the app is actually exposing it: curl the /metrics endpoint</li>
+  </ol>
+
+  <div class="callout insight">
+    <div class="icon">🧠</div>
+    <div class="content">
+      <strong>The Platform Engineer's Golden Rules</strong>
+      1. <strong>Labels must be bounded</strong> — never put request IDs, user IDs, or paths with variable segments in labels.<br>
+      2. <strong>rate() for counters, always</strong> — never graph a raw counter in a dashboard, it only goes up.<br>
+      3. <strong>histogram > summary</strong> for latency — you can aggregate histograms across pods, you cannot aggregate summaries.<br>
+      4. <strong>The "for:" clause prevents alert flapping</strong> — never alert without at least a 1-2 minute "for" duration.<br>
+      5. <strong>Recording rules for expensive queries</strong> — if a dashboard query takes &gt;1s, make it a recording rule.
+    </div>
+  </div>
+
+  <h3>Key PromQL Cheatsheet</h3>
+
+  <table>
+    <tr><th>What You Want</th><th>PromQL</th></tr>
+    <tr><td>Request rate per second</td><td><code>rate(http_requests_total[5m])</code></td></tr>
+    <tr><td>Error rate percentage</td><td><code>rate(errors[5m]) / rate(total[5m]) * 100</code></td></tr>
+    <tr><td>p99 latency from histogram</td><td><code>histogram_quantile(0.99, sum by(le)(rate(latency_bucket[5m])))</code></td></tr>
+    <tr><td>Memory as % of limit</td><td><code>container_memory_working_set_bytes / container_spec_memory_limit_bytes * 100</code></td></tr>
+    <tr><td>Top 5 by value</td><td><code>topk(5, metric_name)</code></td></tr>
+    <tr><td>Filter by label</td><td><code>metric{label="value"}</code></td></tr>
+    <tr><td>Regex filter label</td><td><code>metric{label=~"val1|val2"}</code></td></tr>
+    <tr><td>Exclude by label</td><td><code>metric{label!="value"}</code></td></tr>
+    <tr><td>Absent metric (alerting)</td><td><code>absent(metric{job="x"})</code></td></tr>
+    <tr><td>Count time series</td><td><code>count({__name__="metric_name"})</code></td></tr>
+    <tr><td>Sum across all pods</td><td><code>sum(metric)</code></td></tr>
+    <tr><td>Sum per namespace</td><td><code>sum by (namespace) (metric)</code></td></tr>
+  </table>
+
+</div>
+
+<footer>
+  Built for Anubhav · Prometheus Platform Engineer Guide · Experimental Learning Path<br>
+  <span style="color:#e6522c">🔥 Prometheus</span> · <span style="color:#4fc3f7">PromQL</span> · <span style="color:#66bb6a">TSDB</span>
+</footer>
+
+</body>
+</html>

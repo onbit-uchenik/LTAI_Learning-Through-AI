@@ -1,0 +1,1 @@
+Teach me prometheus from the point of view of platform engineer. Like I dont have enough knowledge how prometheus do what it does? Make it experimental not just theoritical. I have access port-forward prometheus pods so I can play and learn.
