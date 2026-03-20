@@ -59,34 +59,34 @@
 <h2>Memory &amp; Disk</h2>
 
 <div class="metric">
-  <p><strong>1.</strong> Prometheus container current memory usage. This gives the ballpark idea of how much data is stored as head series.</p>
+  <p>Prometheus container current memory usage. This gives the ballpark idea of how much data is stored as head series.</p>
   <pre><code>container_memory_working_set_bytes{pod=~"prometheus-prometheus-prometheus-0", container="prometheus"}</code></pre>
 </div>
 
 <div class="metric">
-  <p><strong>2.</strong> How much disk Prometheus is using (bytes)</p>
+  <p>How much disk Prometheus is using (bytes)</p>
   <pre><code>prometheus_tsdb_storage_blocks_bytes{container="prometheus"}</code></pre>
 </div>
 
 <div class="metric">
-  <p><strong>17.</strong> OOM risk percentage. How close the container is to its memory limit.</p>
+  <p>OOM risk percentage. How close the container is to its memory limit.</p>
   <pre><code>container_memory_working_set_bytes{container="prometheus"} / container_spec_memory_limit_bytes{container="prometheus"}</code></pre>
 </div>
 
 <div class="metric">
-  <p><strong>18.</strong> PVC disk usage percentage for Prometheus persistent volume.</p>
+  <p>PVC disk usage percentage for Prometheus persistent volume.</p>
   <pre><code>kubelet_volume_stats_used_bytes{persistentvolumeclaim=~"prometheus.*"} / kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~"prometheus.*"}</code></pre>
 </div>
 
 <h2>Head Block &amp; Series</h2>
 
 <div class="metric">
-  <p><strong>3.</strong> Total number of series in the Head Block (count)</p>
+  <p>Total number of series in the Head Block (count)</p>
   <pre><code>prometheus_tsdb_head_series</code></pre>
 </div>
 
 <div class="metric">
-  <p><strong>4.</strong> 20 most expensive metrics. Most expensive is defined as total number of unique series per metric.</p>
+  <p>20 most expensive metrics. Most expensive is defined as total number of unique series per metric.</p>
   <pre><code>topk(20,
   count by (__name__) ({__name__=~".+"})
 )</code></pre>
@@ -95,79 +95,79 @@
 <h2>WAL (Write-Ahead Log)</h2>
 
 <div class="metric">
-  <p><strong>5.</strong> WAL disk size. A bloated WAL means checkpoint failures or high churn, and causes slow restarts.</p>
+  <p>WAL disk size. A bloated WAL means checkpoint failures or high churn, and causes slow restarts.</p>
   <pre><code>prometheus_tsdb_wal_storage_size_bytes</code></pre>
 </div>
 
 <div class="metric">
-  <p><strong>6.</strong> WAL checkpoint creation failures.</p>
+  <p>WAL checkpoint creation failures.</p>
   <pre><code>prometheus_tsdb_checkpoint_creations_failed_total</code></pre>
 </div>
 
 <div class="metric">
-  <p><strong>7.</strong> WAL truncation failures.</p>
+  <p>WAL truncation failures.</p>
   <pre><code>prometheus_tsdb_wal_truncations_failed_total</code></pre>
 </div>
 
 <h2>Compaction</h2>
 
 <div class="metric">
-  <p><strong>8.</strong> Compaction failures. Failed compactions mean blocks aren't being merged, leading to query slowness and disk bloat.</p>
+  <p>Compaction failures. Failed compactions mean blocks aren't being merged, leading to query slowness and disk bloat.</p>
   <pre><code>prometheus_tsdb_compactions_failed_total</code></pre>
 </div>
 
 <h2>Ingestion</h2>
 
 <div class="metric">
-  <p><strong>9.</strong> Samples ingested per second. Best metric for understanding ingestion load.</p>
+  <p>Samples ingested per second. Best metric for understanding ingestion load.</p>
   <pre><code>rate(prometheus_tsdb_samples_appended_total[5m])</code></pre>
 </div>
 
 <div class="metric">
-  <p><strong>10.</strong> Out of order samples rejected per second. High rate means wasted scrapes or misconfigured targets.</p>
+  <p>Out of order samples rejected per second. High rate means wasted scrapes or misconfigured targets.</p>
   <pre><code>rate(prometheus_tsdb_out_of_order_samples_total[5m])</code></pre>
 </div>
 
 <h2>Series Churn</h2>
 
 <div class="metric">
-  <p><strong>11.</strong> Series churn - creation rate. High creation rate means high cardinality churn and memory pressure.</p>
+  <p>Series churn - creation rate. High creation rate means high cardinality churn and memory pressure.</p>
   <pre><code>rate(prometheus_tsdb_head_series_created_total[5m])</code></pre>
 </div>
 
 <div class="metric">
-  <p><strong>12.</strong> Series churn - removal rate. Pair with creation rate to understand net series growth.</p>
+  <p>Series churn - removal rate. Pair with creation rate to understand net series growth.</p>
   <pre><code>rate(prometheus_tsdb_head_series_removed_total[5m])</code></pre>
 </div>
 
 <h2>Scrape Health</h2>
 
 <div class="metric">
-  <p><strong>13.</strong> Scrape targets that are down.</p>
+  <p>Scrape targets that are down.</p>
   <pre><code>up == 0</code></pre>
 </div>
 
 <div class="metric">
-  <p><strong>14.</strong> Scrape duration per target. Slow scrapes can cause timeouts and data gaps.</p>
+  <p>Scrape duration per target. Slow scrapes can cause timeouts and data gaps.</p>
   <pre><code>scrape_duration_seconds</code></pre>
 </div>
 
 <div class="metric">
-  <p><strong>15.</strong> Per-target series count. Helps find targets pushing too many series.</p>
+  <p>Per-target series count. Helps find targets pushing too many series.</p>
   <pre><code>scrape_samples_scraped</code></pre>
 </div>
 
 <h2>Query Performance</h2>
 
 <div class="metric">
-  <p><strong>16.</strong> Query performance. Slow queries consume memory and CPU.</p>
+  <p>Query performance. Slow queries consume memory and CPU.</p>
   <pre><code>prometheus_engine_query_duration_seconds</code></pre>
 </div>
 
 <h2>Config</h2>
 
 <div class="metric">
-  <p><strong>19.</strong> Config reload status. 0 means the last reload failed and a broken config is being silently ignored.</p>
+  <p>Config reload status. 0 means the last reload failed and a broken config is being silently ignored.</p>
   <pre><code>prometheus_config_last_reload_successful</code></pre>
 </div>
 
