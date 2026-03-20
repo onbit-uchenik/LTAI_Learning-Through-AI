@@ -443,6 +443,7 @@
       <li><a href="#s8">Cardinality — The Platform Engineer's #1 Concern</a></li>
       <li><a href="#s9">Recording Rules & Alerts</a></li>
       <li><a href="#s10">Platform Engineer Mental Checklist</a></li>
+      <li><a href="#s11">Kubernetes Resources — What the Helm Chart Installs</a></li>
     </ol>
   </div>
 
@@ -1242,6 +1243,233 @@ kube_pod_container_resource_limits{resource="memory"}
     <tr><td>Sum across all pods</td><td><code>sum(metric)</code></td></tr>
     <tr><td>Sum per namespace</td><td><code>sum by (namespace) (metric)</code></td></tr>
   </table>
+
+  <!-- ===================== SECTION 11 ===================== -->
+  <h2 class="section-title" id="s11"><span class="num">11</span> Kubernetes Resources — What the Helm Chart Installs</h2>
+
+  <p>When you install the <code>kube-prometheus-stack</code> chart (v73.2.2) from <code>prometheus-community/helm-charts</code> into the <code>monitoring</code> namespace, it deploys a full monitoring stack. Here's every resource and why it exists.</p>
+
+  <h3>The Operator — The Brain</h3>
+
+  <table>
+    <tr><th>Resource</th><th>Kind</th><th>Role & Responsibility</th></tr>
+    <tr>
+      <td><strong>prometheus-operator</strong></td>
+      <td>Deployment</td>
+      <td>Watches for CRDs (<code>Prometheus</code>, <code>ServiceMonitor</code>, <code>PodMonitor</code>, <code>PrometheusRule</code>, <code>AlertmanagerConfig</code>) and reconciles them into native Kubernetes resources (StatefulSets, ConfigMaps, Secrets). It is the control plane of the entire stack — you never manually configure Prometheus; you declare intent via CRDs and the operator makes it happen.</td>
+    </tr>
+  </table>
+
+  <h3>Custom Resource Definitions (CRDs)</h3>
+
+  <p>These are cluster-scoped and form the declarative API for the entire monitoring stack:</p>
+
+  <table>
+    <tr><th>CRD</th><th>Role & Responsibility</th></tr>
+    <tr><td><strong>Prometheus</strong></td><td>Declares a Prometheus server instance. The operator reads this and creates a StatefulSet with the right config, storage, and RBAC. You control replicas, retention, resources, and remote-write here.</td></tr>
+    <tr><td><strong>Alertmanager</strong></td><td>Declares an Alertmanager instance. The operator creates a StatefulSet that handles alert deduplication, grouping, routing, and notification delivery.</td></tr>
+    <tr><td><strong>ServiceMonitor</strong></td><td>Tells Prometheus which <code>Services</code> to scrape. Uses label selectors to match services and defines the port, path, and interval. This is how you onboard new apps into monitoring without editing prometheus.yml.</td></tr>
+    <tr><td><strong>PodMonitor</strong></td><td>Like ServiceMonitor but targets <code>Pods</code> directly, bypassing Services. Use this for sidecar containers or pods that don't have a Service in front of them.</td></tr>
+    <tr><td><strong>PrometheusRule</strong></td><td>Defines recording rules (pre-computed queries stored as new metrics) and alerting rules (conditions that fire alerts). The operator loads these into Prometheus automatically.</td></tr>
+    <tr><td><strong>AlertmanagerConfig</strong></td><td>Namespace-scoped subset of Alertmanager configuration. Lets teams define their own routing and receivers (Slack channels, PagerDuty keys) without touching the global Alertmanager config.</td></tr>
+    <tr><td><strong>ScrapeConfig</strong></td><td>Declares additional scrape configurations for targets outside the Kubernetes cluster or for non-standard discovery mechanisms.</td></tr>
+    <tr><td><strong>PrometheusAgent</strong></td><td>Declares a Prometheus instance in Agent mode — it only scrapes and remote-writes. No local TSDB, no PromQL queries. Used for edge clusters that forward metrics to a central Prometheus/Thanos.</td></tr>
+    <tr><td><strong>ThanosRuler</strong></td><td>Declares a Thanos Ruler instance that evaluates recording and alerting rules against a Thanos query endpoint, enabling rule evaluation over long-term storage.</td></tr>
+  </table>
+
+  <h3>Data Plane — Prometheus Server</h3>
+
+  <table>
+    <tr><th>Resource</th><th>Kind</th><th>Role & Responsibility</th></tr>
+    <tr><td><strong>prometheus-kube-prometheus-stack-prometheus</strong></td><td>StatefulSet</td><td>Runs the Prometheus server pods. Responsible for scraping all targets on the configured interval, evaluating recording and alerting rules, storing time series data in the TSDB, and serving PromQL queries via its HTTP API on port 9090.</td></tr>
+    <tr><td>prometheus PVC</td><td>PersistentVolumeClaim</td><td>Persistent storage for the TSDB. Without this, Prometheus loses all historical data on pod restart. Sized based on retention period × ingestion rate × ~1.5 bytes per sample.</td></tr>
+    <tr><td>prometheus config</td><td>Secret</td><td>Contains the generated <code>prometheus.yml</code> assembled by the operator from all ServiceMonitors, PodMonitors, and ScrapeConfigs. You never edit this directly — the operator owns it.</td></tr>
+    <tr><td>prometheus service</td><td>Service (ClusterIP)</td><td>Exposes the Prometheus UI and API on port 9090. This is what you port-forward to, and what Grafana uses as a datasource.</td></tr>
+  </table>
+
+  <h3>Data Plane — Alertmanager</h3>
+
+  <table>
+    <tr><th>Resource</th><th>Kind</th><th>Role & Responsibility</th></tr>
+    <tr><td><strong>alertmanager-kube-prometheus-stack-alertmanager</strong></td><td>StatefulSet</td><td>Receives alerts from Prometheus, deduplicates them (so you don't get 50 emails for the same issue), groups related alerts together, applies silences and inhibition rules, and routes notifications to the right receiver (Slack, PagerDuty, email, webhooks).</td></tr>
+    <tr><td>alertmanager config</td><td>Secret</td><td>Contains <code>alertmanager.yml</code> with the routing tree, receivers, inhibition rules, and global settings (SMTP config, Slack webhook URLs). Managed by the operator from AlertmanagerConfig CRDs.</td></tr>
+    <tr><td>alertmanager service</td><td>Service (ClusterIP)</td><td>Exposes the Alertmanager UI on port 9093. Used for viewing current alerts, creating silences, and debugging routing.</td></tr>
+  </table>
+
+  <h3>Data Plane — Grafana</h3>
+
+  <table>
+    <tr><th>Resource</th><th>Kind</th><th>Role & Responsibility</th></tr>
+    <tr><td><strong>grafana</strong></td><td>Deployment</td><td>Runs Grafana for dashboarding and visualization. Pre-configured with Prometheus as a datasource. Serves the UI where teams build and view dashboards for their services.</td></tr>
+    <tr><td>grafana service</td><td>Service</td><td>Exposes Grafana UI (port 80 → 3000). This is what users access for dashboards.</td></tr>
+    <tr><td>grafana configmaps</td><td>ConfigMap (multiple)</td><td>Dashboard JSON files and datasource provisioning configs. The chart ships ~30+ pre-built dashboards covering nodes, pods, namespaces, apiserver, etcd, CoreDNS, and more. These are loaded automatically on startup.</td></tr>
+    <tr><td>grafana secret</td><td>Secret</td><td>Admin credentials (default user/password). Change these immediately in production.</td></tr>
+  </table>
+
+  <h3>Exporters — Metrics Collection Agents</h3>
+
+  <table>
+    <tr><th>Resource</th><th>Kind</th><th>Role & Responsibility</th></tr>
+    <tr><td><strong>prometheus-node-exporter</strong></td><td>DaemonSet</td><td>Runs on <strong>every node</strong> in the cluster. Exposes hardware and OS-level metrics — CPU utilization, memory usage, disk I/O, filesystem space, network traffic. This is the source of all <code>node_*</code> metrics. Without it, you have zero visibility into node health.</td></tr>
+    <tr><td><strong>kube-state-metrics</strong></td><td>Deployment</td><td>Listens to the Kubernetes API server and generates metrics about the <strong>state of Kubernetes objects</strong> — pod phase, deployment replica counts, job completion status, node conditions, PVC status, etc. Source of all <code>kube_*</code> metrics. Without it, you know hardware health but not workload health.</td></tr>
+  </table>
+
+  <div class="callout insight">
+    <div class="icon">🧠</div>
+    <div class="content">
+      <strong>node-exporter vs kube-state-metrics — Know the Difference</strong>
+      <strong>node-exporter</strong> answers: "How is the machine doing?" (CPU, memory, disk at the OS level).<br>
+      <strong>kube-state-metrics</strong> answers: "How are the Kubernetes objects doing?" (Is the deployment at desired replicas? Is the pod crashing? Is the PVC bound?).<br>
+      You need both. One without the other gives you half the picture.
+    </div>
+  </div>
+
+  <h3>RBAC Resources</h3>
+
+  <table>
+    <tr><th>Resource</th><th>Kind</th><th>Role & Responsibility</th></tr>
+    <tr><td>ClusterRole / ClusterRoleBinding (multiple)</td><td>RBAC</td><td>Grants Prometheus permission to discover and scrape targets across all namespaces via the Kubernetes API. Grants the operator permission to watch and manage CRDs. Grants kube-state-metrics read-only access to the Kubernetes API for object state. Each component gets least-privilege access.</td></tr>
+    <tr><td>ServiceAccount (multiple)</td><td>ServiceAccount</td><td>One per component — prometheus, alertmanager, operator, grafana, node-exporter, kube-state-metrics. Each pod runs under its own identity so RBAC policies can be scoped precisely.</td></tr>
+  </table>
+
+  <h3>ServiceMonitors — Self-Monitoring & Kubernetes Internals</h3>
+
+  <p>The chart auto-creates ServiceMonitors so Prometheus scrapes itself and all critical Kubernetes control plane components out of the box:</p>
+
+  <table>
+    <tr><th>ServiceMonitor</th><th>What It Scrapes</th><th>Why It Matters</th></tr>
+    <tr><td><strong>apiserver</strong></td><td>kube-apiserver</td><td>Request latency, rate, errors, admission webhook duration. If the API server is slow, everything is slow.</td></tr>
+    <tr><td><strong>kubelet</strong></td><td>Kubelet + cAdvisor</td><td>Container-level CPU, memory, network, filesystem. The <code>container_*</code> metrics that power pod dashboards come from here.</td></tr>
+    <tr><td><strong>kube-controller-manager</strong></td><td>Controller manager</td><td>Work queue depth, reconciliation latency. Tells you if controllers are falling behind.</td></tr>
+    <tr><td><strong>kube-scheduler</strong></td><td>Scheduler</td><td>Scheduling latency, pending pods, preemption counts. Detects scheduling bottlenecks.</td></tr>
+    <tr><td><strong>kube-etcd</strong></td><td>etcd</td><td>Leader changes, disk fsync duration, proposal counts. etcd health = cluster health.</td></tr>
+    <tr><td><strong>coredns</strong></td><td>CoreDNS</td><td>DNS request rate, cache hit ratio, errors. DNS failures cause cascading app failures.</td></tr>
+    <tr><td><strong>kube-proxy</strong></td><td>kube-proxy</td><td>Proxy sync latency, iptables rule counts. Networking issues surface here.</td></tr>
+    <tr><td><strong>node-exporter</strong></td><td>The node-exporter DaemonSet</td><td>Self-monitoring — ensures the exporter itself is healthy on every node.</td></tr>
+    <tr><td><strong>kube-state-metrics</strong></td><td>The kube-state-metrics deployment</td><td>Self-monitoring — ensures KSM is healthy and not falling behind the API.</td></tr>
+    <tr><td><strong>prometheus-operator</strong></td><td>The operator itself</td><td>Reconciliation errors, CRD processing latency. If the operator is unhealthy, config changes stop propagating.</td></tr>
+    <tr><td><strong>prometheus</strong></td><td>Prometheus self-metrics</td><td>Ingestion rate, head series count, query duration — the metrics from Experiment 8.</td></tr>
+    <tr><td><strong>alertmanager</strong></td><td>Alertmanager self-metrics</td><td>Notification delivery success/failure, alert group counts.</td></tr>
+    <tr><td><strong>grafana</strong></td><td>Grafana self-metrics</td><td>Dashboard load times, active sessions, datasource errors.</td></tr>
+  </table>
+
+  <h3>PrometheusRules — Pre-configured Alerts & Recording Rules</h3>
+
+  <p>The chart ships a large set of battle-tested <code>PrometheusRule</code> resources so you get alerting out of the box:</p>
+
+  <table>
+    <tr><th>Rule Group</th><th>Example Alerts</th><th>What They Catch</th></tr>
+    <tr><td><strong>node</strong></td><td><code>NodeFilesystemSpaceFillingUp</code>, <code>NodeMemoryHighUtilization</code>, <code>NodeCPUHighUsage</code></td><td>Hardware-level problems before they cause pod evictions or OOMs.</td></tr>
+    <tr><td><strong>kubernetes-apps</strong></td><td><code>KubePodCrashLooping</code>, <code>KubeDeploymentReplicasMismatch</code>, <code>KubeContainerOOMKilled</code></td><td>Workload health — the alerts dev teams care about most.</td></tr>
+    <tr><td><strong>kubernetes-resources</strong></td><td><code>CPUThrottlingHigh</code>, <code>KubeQuotaAlmostFull</code></td><td>Resource contention and quota exhaustion before they block deployments.</td></tr>
+    <tr><td><strong>kubernetes-system</strong></td><td><code>KubeAPILatencyHigh</code>, <code>KubeClientErrors</code>, <code>KubeAPIDown</code></td><td>Control plane health — if these fire, the cluster itself is degraded.</td></tr>
+    <tr><td><strong>etcd</strong></td><td><code>etcdInsufficientMembers</code>, <code>etcdHighCommitDurations</code></td><td>etcd quorum and performance problems that threaten cluster data.</td></tr>
+    <tr><td><strong>prometheus</strong></td><td><code>PrometheusTSDBCompactionsFailing</code>, <code>PrometheusTargetScrapesDuplicate</code></td><td>Monitoring stack self-health — who monitors the monitor.</td></tr>
+    <tr><td><strong>alertmanager</strong></td><td><code>AlertmanagerFailedToSendAlerts</code>, <code>AlertmanagerClusterDown</code></td><td>Notification pipeline failures — alerts firing but nobody receiving them.</td></tr>
+    <tr><td><strong>general</strong></td><td><code>Watchdog</code> (always-firing heartbeat), <code>InfoInhibitor</code></td><td>Watchdog is a "dead man's switch" — if it stops firing, your alerting pipeline is broken.</td></tr>
+    <tr><td><strong>recording rules</strong></td><td><code>node:node_cpu_utilisation:avg1m</code>, <code>namespace_workload_pod:kube_pod_owner:relabel</code></td><td>Pre-aggregated metrics that make dashboard queries fast. Without these, Grafana dashboards would be slow or timeout.</td></tr>
+  </table>
+
+  <h3>Admission Webhooks & Networking</h3>
+
+  <table>
+    <tr><th>Resource</th><th>Kind</th><th>Role & Responsibility</th></tr>
+    <tr><td>ValidatingWebhookConfiguration</td><td>Webhook</td><td>The operator registers a validating webhook that checks CRDs (especially PrometheusRule) before they are persisted to etcd. Catches syntax errors in PromQL expressions at apply time rather than at evaluation time — saving you from silent alert failures.</td></tr>
+    <tr><td>webhook service + TLS secret</td><td>Service, Secret</td><td>The endpoint and TLS certificate for the admission webhook. The API server calls this service to validate CRDs.</td></tr>
+    <tr><td>NetworkPolicy (optional)</td><td>NetworkPolicy</td><td>Restricts ingress/egress traffic to monitoring components. When enabled, only allows Prometheus to reach scrape targets and Alertmanager to reach notification endpoints.</td></tr>
+  </table>
+
+  <h3>How It All Fits Together</h3>
+
+  <div class="architecture-diagram">
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         monitoring namespace                            │
+│                                                                         │
+│  ┌─────────────────────┐       watches CRDs        ┌────────────────┐  │
+│  │  <span class="arch-orange">Prometheus Operator</span>  │◄─────────────────────────│ ServiceMonitor │  │
+│  │     (Deployment)     │        reconciles         │ PodMonitor     │  │
+│  └──────────┬──────────┘                            │ PrometheusRule │  │
+│             │ creates & manages                     │ Alertmanager   │  │
+│             ▼                                       │   Config       │  │
+│  ┌─────────────────────┐                            └────────────────┘  │
+│  │    <span class="arch-orange">Prometheus</span>         │                                               │
+│  │   (StatefulSet)      │──── scrapes ──┬──► <span class="arch-green">node-exporter</span> (DaemonSet)   │
+│  │                      │               ├──► <span class="arch-green">kube-state-metrics</span> (Deploy) │
+│  │  TSDB + PromQL +     │               ├──► kubelet / cAdvisor         │
+│  │  Rules Engine        │               ├──► apiserver / etcd / coredns │
+│  │                      │               └──► your app pods              │
+│  └───────┬──────┬───────┘                                               │
+│          │      │                                                       │
+│   alerts │      │ query                                                 │
+│          ▼      ▼                                                       │
+│  ┌────────────┐ ┌────────────┐                                          │
+│  │<span class="arch-orange">Alertmanager</span>│ │  <span class="arch-blue">Grafana</span>    │                                          │
+│  │(StatefulSet)│ │(Deployment)│                                          │
+│  └─────┬──────┘ └────────────┘                                          │
+│        │                                                                │
+│        ▼                                                                │
+│  Slack / PagerDuty / Email                                              │
+└─────────────────────────────────────────────────────────────────────────┘</div>
+
+  <div class="experiment">
+    <div class="exp-header">
+      <div class="exp-icon">🧪</div>
+      <div>
+        <div class="exp-title">Experiment 12 — Explore All Resources in Your Monitoring Namespace</div>
+        <div class="exp-subtitle">See everything the helm chart deployed</div>
+      </div>
+    </div>
+
+    <h4>List All Resources</h4>
+    <pre><code><span class="comment"># See all standard resources</span>
+kubectl get all -n monitoring
+
+<span class="comment"># See CRDs specific to the prometheus-operator</span>
+kubectl get servicemonitor,podmonitor,prometheusrule,alertmanagerconfig -n monitoring
+
+<span class="comment"># See the Prometheus and Alertmanager custom resources</span>
+kubectl get prometheus,alertmanager -n monitoring
+
+<span class="comment"># See RBAC resources</span>
+kubectl get serviceaccount,clusterrole,clusterrolebinding -n monitoring | head -30</code></pre>
+
+    <h4>Inspect Key Components</h4>
+    <pre><code><span class="comment"># How many ServiceMonitors are defining scrape targets?</span>
+kubectl get servicemonitor -n monitoring --no-headers | wc -l
+
+<span class="comment"># How many PrometheusRules (alert + recording rule groups) exist?</span>
+kubectl get prometheusrule -n monitoring --no-headers | wc -l
+
+<span class="comment"># Check the Prometheus CR — this is what the operator reconciles</span>
+kubectl get prometheus -n monitoring -o yaml
+
+<span class="comment"># Check what the operator is doing (look for reconciliation errors)</span>
+kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus-operator --tail=50</code></pre>
+
+    <h4>Verify the Data Flow</h4>
+    <pre><code><span class="comment"># Is node-exporter running on every node?</span>
+kubectl get ds -n monitoring
+
+<span class="comment"># Is kube-state-metrics healthy?</span>
+kubectl get deploy kube-state-metrics -n monitoring
+
+<span class="comment"># Are Prometheus pods running and ready?</span>
+kubectl get statefulset -n monitoring
+
+<span class="comment"># Are all scrape targets UP?</span>
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
+<span class="comment"># Then open http://localhost:9090/targets</span></code></pre>
+
+    <p style="color:#a5d6a7;margin-top:12px;font-size:0.9em">✅ If the ServiceMonitor count matches what you expect, the PrometheusRules are loaded (check <code>/rules</code>), and all targets show UP on the <code>/targets</code> page — your monitoring stack is healthy.</p>
+  </div>
+
+  <div class="callout warn">
+    <div class="icon">⚠️</div>
+    <div class="content">
+      <strong>Common Gotcha: CRD Label Selectors</strong>
+      The Prometheus CR has <code>serviceMonitorSelector</code> and <code>ruleSelector</code> fields. If these are set to match specific labels, any ServiceMonitor or PrometheusRule without those labels will be silently ignored. When "my ServiceMonitor isn't being picked up", check the selector first: <code>kubectl get prometheus -n monitoring -o jsonpath='{.items[0].spec.serviceMonitorSelector}'</code>
+    </div>
+  </div>
 
 </div>
 
