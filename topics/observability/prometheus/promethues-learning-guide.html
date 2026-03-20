@@ -444,6 +444,8 @@
       <li><a href="#s9">Recording Rules & Alerts</a></li>
       <li><a href="#s10">Platform Engineer Mental Checklist</a></li>
       <li><a href="#s11">Kubernetes Resources — What the Helm Chart Installs</a></li>
+      <li><a href="#s12">How Metrics Are Actually Generated — Who Collects What</a></li>
+      <li><a href="#s13">The Config Pipeline — How Prometheus Knows What to Scrape</a></li>
     </ol>
   </div>
 
@@ -1469,6 +1471,456 @@ kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:909
       <strong>Common Gotcha: CRD Label Selectors</strong>
       The Prometheus CR has <code>serviceMonitorSelector</code> and <code>ruleSelector</code> fields. If these are set to match specific labels, any ServiceMonitor or PrometheusRule without those labels will be silently ignored. When "my ServiceMonitor isn't being picked up", check the selector first: <code>kubectl get prometheus -n monitoring -o jsonpath='{.items[0].spec.serviceMonitorSelector}'</code>
     </div>
+  </div>
+
+  <!-- ===================== SECTION 12 ===================== -->
+  <h2 class="section-title" id="s12"><span class="num">12</span> How Metrics Are Actually Generated — Who Collects What</h2>
+
+  <p>A common misconception is that node-exporter and kube-state-metrics "scrape targets and push data to Prometheus". They don't push anything, and they don't scrape in the way Prometheus does. Each metrics source generates data in a completely different way. Prometheus is the only component that pulls.</p>
+
+  <h3>node-exporter — Reads the Linux Kernel</h3>
+
+  <p>node-exporter doesn't talk to any service or API. It reads <strong>virtual filesystems</strong> that the Linux kernel exposes on every machine:</p>
+
+  <div class="architecture-diagram">
+┌─────────────────────────────────────────────────────────┐
+│                      Linux Node                          │
+│                                                          │
+│    <span class="arch-green">/proc/stat</span>           ──► CPU usage per core            │
+│    <span class="arch-green">/proc/meminfo</span>        ──► Total, free, cached memory    │
+│    <span class="arch-green">/proc/net/dev</span>        ──► Network bytes rx/tx per iface │
+│    <span class="arch-green">/sys/class/thermal</span>   ──► CPU temperature                │
+│    <span class="arch-green">/sys/block/sda/stat</span>  ──► Disk I/O reads, writes, time  │
+│    <span class="arch-green">statfs() syscall</span>     ──► Filesystem space used/avail    │
+│              ▲                                           │
+│              │ reads virtual files                       │
+│    ┌─────────┴──────────┐                                │
+│    │  <span class="arch-orange">node-exporter</span>      │── serves :9100/metrics          │
+│    │  (DaemonSet pod)    │                                │
+│    └─────────────────────┘                                │
+└─────────────────────────────────────────────────────────┘</div>
+
+  <p><code>/proc</code> and <code>/sys</code> are not real files on disk — they're virtual interfaces the kernel generates on the fly. When node-exporter reads <code>/proc/meminfo</code>, the kernel calculates current memory stats at that instant. It's like asking the OS directly "how much RAM is free right now?"</p>
+
+  <div class="callout info">
+    <div class="icon">💡</div>
+    <div class="content">
+      <strong>Why DaemonSet?</strong>
+      <code>/proc</code> and <code>/sys</code> are local to each machine. Node A cannot read Node B's <code>/proc</code>. So node-exporter must run on every node — that's exactly what a DaemonSet guarantees.
+    </div>
+  </div>
+
+  <h3>kube-state-metrics — Watches the Kubernetes API</h3>
+
+  <p>kube-state-metrics doesn't read any filesystem. It opens a <strong>persistent watch connection</strong> to the Kubernetes API server and listens for object changes in real time:</p>
+
+  <div class="architecture-diagram">
+┌──────────────────┐   watch (persistent HTTP stream)   ┌──────────────────┐
+│                  │ ◄──────────────────────────────── │  <span class="arch-orange">kube-state-</span>      │
+│  <span class="arch-blue">kube-apiserver</span>   │   "here's every Pod/Deploy/Node  │  <span class="arch-orange">metrics</span>          │
+│                  │    change as it happens"           │                  │
+│  stores all K8s  │ ────────────────────────────────► │  converts K8s    │
+│  objects in etcd │                                    │  object state to │
+│                  │                                    │  Prometheus format│
+└──────────────────┘                                    │  on :8080/metrics │
+                                                        └──────────────────┘</div>
+
+  <p>The flow:</p>
+  <ol class="step-list">
+    <li>kube-state-metrics calls the Kubernetes API: <code>GET /api/v1/pods?watch=true</code></li>
+    <li>The API server streams every pod create/update/delete event over a persistent connection</li>
+    <li>kube-state-metrics maintains an <strong>in-memory cache</strong> of all Kubernetes objects</li>
+    <li>When Prometheus hits <code>:8080/metrics</code>, kube-state-metrics iterates over that cache and generates metrics</li>
+  </ol>
+
+  <pre><code><span class="comment"># Example output from kube-state-metrics /metrics endpoint:</span>
+
+<span class="comment"># Pod phase</span>
+<span class="label">kube_pod_status_phase{pod="api-server-0", namespace="default", phase="Running"}</span> <span class="number">1</span>
+
+<span class="comment"># Deployment replicas</span>
+<span class="label">kube_deployment_status_replicas_available{deployment="nginx", namespace="default"}</span> <span class="number">3</span>
+<span class="label">kube_deployment_spec_replicas{deployment="nginx", namespace="default"}</span> <span class="number">3</span>
+
+<span class="comment"># Container restarts</span>
+<span class="label">kube_pod_container_status_restarts_total{pod="api-server-0", container="api"}</span> <span class="number">4</span></code></pre>
+
+  <div class="callout info">
+    <div class="icon">💡</div>
+    <div class="content">
+      <strong>Why Deployment (single replica)?</strong>
+      The Kubernetes API is cluster-wide — one kube-state-metrics instance sees every object in the cluster. No need to run on every node. A single Deployment replica is sufficient.
+    </div>
+  </div>
+
+  <h3>Kubelet's cAdvisor — Container-Level Metrics</h3>
+
+  <p>Every kubelet has <strong>cAdvisor built in</strong>. It automatically tracks CPU, memory, network, and filesystem usage for every container running on that node. The kubelet exposes this on <code>/metrics/cadvisor</code>. No exporter needed — it's part of Kubernetes itself.</p>
+
+  <pre><code><span class="comment"># Prometheus scrapes the kubelet directly for container metrics:</span>
+<span class="label">container_cpu_usage_seconds_total{pod="api-server-0", container="api", namespace="default"}</span> <span class="number">542.8</span>
+<span class="label">container_memory_working_set_bytes{pod="api-server-0", container="api", namespace="default"}</span> <span class="number">1.34e+08</span></code></pre>
+
+  <h3>Application Metrics — The App Instruments Itself</h3>
+
+  <p>There is <strong>no external agent</strong> collecting application metrics. Your app imports a <strong>Prometheus client library</strong>, creates metrics, updates them as things happen, and the library handles exposing the <code>/metrics</code> HTTP endpoint.</p>
+
+  <div class="architecture-diagram">
+┌──────────────────────────────────────────────────────────┐
+│                      Your App Pod                         │
+│                                                           │
+│  ┌────────────────────┐     ┌──────────────────────────┐ │
+│  │  Your Business Code │     │  Prometheus Client Library│ │
+│  │                     │     │                          │ │
+│  │  <span class="arch-blue">// on every request</span> │────►│  Keeps counters, gauges, │ │
+│  │  <span class="arch-blue">counter.Inc()</span>       │     │  histograms in memory    │ │
+│  │  <span class="arch-blue">histogram.Observe()</span> │     │                          │ │
+│  └────────────────────┘     └────────────┬─────────────┘ │
+│                                          │                │
+│                                 serves :8080/metrics      │
+└──────────────────────────────────────────│────────────────┘
+                                           ▲
+                                           │ HTTP GET every 15s
+                                       <span class="arch-orange">Prometheus</span></div>
+
+  <h4>What It Looks Like in Code</h4>
+
+  <p><strong>Go:</strong></p>
+  <pre><code><span class="keyword">import</span> <span class="string">"github.com/prometheus/client_golang/prometheus"</span>
+
+<span class="keyword">var</span> httpRequests = prometheus.<span class="func">NewCounterVec</span>(
+    prometheus.CounterOpts{
+        Name: <span class="string">"http_requests_total"</span>,
+        Help: <span class="string">"Total HTTP requests"</span>,
+    },
+    []<span class="keyword">string</span>{<span class="string">"method"</span>, <span class="string">"status"</span>},
+)
+
+<span class="comment">// In your handler:</span>
+httpRequests.<span class="func">WithLabelValues</span>(<span class="string">"GET"</span>, <span class="string">"200"</span>).<span class="func">Inc</span>()</code></pre>
+
+  <p><strong>Python:</strong></p>
+  <pre><code><span class="keyword">from</span> prometheus_client <span class="keyword">import</span> Counter, start_http_server
+
+http_requests = <span class="func">Counter</span>(<span class="string">'http_requests_total'</span>, <span class="string">'Total HTTP requests'</span>, [<span class="string">'method'</span>, <span class="string">'status'</span>])
+
+<span class="comment"># In your handler:</span>
+http_requests.<span class="func">labels</span>(method=<span class="string">'GET'</span>, status=<span class="string">'200'</span>).<span class="func">inc</span>()
+
+<span class="func">start_http_server</span>(<span class="number">8080</span>)  <span class="comment"># serves /metrics on :8080</span></code></pre>
+
+  <p><strong>Java (Spring Boot):</strong></p>
+  <pre><code><span class="comment">// Spring Boot auto-exposes /actuator/prometheus — zero code for default metrics</span>
+<span class="comment">// For custom metrics:</span>
+Counter.<span class="func">builder</span>(<span class="string">"http_requests_total"</span>)
+    .<span class="func">tag</span>(<span class="string">"method"</span>, <span class="string">"GET"</span>)
+    .<span class="func">register</span>(meterRegistry)
+    .<span class="func">increment</span>();</code></pre>
+
+  <h4>Three Categories of Application Metrics</h4>
+
+  <table>
+    <tr><th>Category</th><th>Who Instruments It</th><th>Examples</th></tr>
+    <tr><td><strong>Runtime metrics</strong></td><td>The client library — automatic, free</td><td><code>process_cpu_seconds_total</code>, <code>jvm_memory_bytes_used</code>, <code>go_goroutines</code></td></tr>
+    <tr><td><strong>Framework metrics</strong></td><td>Your framework (Spring Boot, Express, etc.)</td><td><code>http_request_duration_seconds</code>, <code>http_requests_total</code></td></tr>
+    <tr><td><strong>Business metrics</strong></td><td>You, manually in your code</td><td><code>orders_placed_total</code>, <code>payment_failures_total</code>, <code>queue_depth</code></td></tr>
+  </table>
+
+  <h4>What If the App Can't Be Modified?</h4>
+
+  <p>For apps you can't instrument (third-party databases, legacy software), two options exist:</p>
+
+  <table>
+    <tr><th>Approach</th><th>How It Works</th><th>Example</th></tr>
+    <tr><td><strong>Sidecar exporter</strong></td><td>A separate container in the same pod that translates the app's native metrics to Prometheus format</td><td><code>mysqld_exporter</code> reads MySQL's <code>SHOW STATUS</code> and exposes it as <code>/metrics</code>. <code>redis_exporter</code> translates Redis <code>INFO</code>. <code>nginx-exporter</code> parses the stub status page.</td></tr>
+    <tr><td><strong>Pushgateway</strong></td><td>For short-lived jobs (cron jobs, batch scripts) that exit before Prometheus can scrape them — the job pushes metrics to a Pushgateway, Prometheus scrapes the gateway</td><td>A Kubernetes CronJob that runs for 10 seconds can't wait for Prometheus to come scrape it, so it pushes to the gateway before exiting.</td></tr>
+  </table>
+
+  <div class="architecture-diagram">
+<span class="arch-blue">Sidecar pattern:</span>
+  MySQL ◄── reads ── <span class="arch-green">mysqld_exporter</span> ◄── pull ── <span class="arch-orange">Prometheus</span>
+                      (sidecar pod)
+
+<span class="arch-blue">Pushgateway pattern:</span>
+  Short-lived job ── push ──► <span class="arch-green">Pushgateway</span> ◄── pull ── <span class="arch-orange">Prometheus</span>
+                              (persists metrics
+                               until overwritten)</div>
+
+  <h3>The Complete Picture — Who Generates What</h3>
+
+  <table>
+    <tr><th>Metrics About</th><th>Generated By</th><th>How</th></tr>
+    <tr><td><strong>Node hardware</strong> (CPU, RAM, disk)</td><td>node-exporter</td><td>Reads <code>/proc</code> and <code>/sys</code> from the Linux kernel</td></tr>
+    <tr><td><strong>Kubernetes objects</strong> (pods, deploys, jobs)</td><td>kube-state-metrics</td><td>Watches the Kubernetes API server stream</td></tr>
+    <tr><td><strong>Container resources</strong> (container CPU/mem)</td><td>kubelet's built-in cAdvisor</td><td>Kubelet exposes <code>/metrics/cadvisor</code> natively</td></tr>
+    <tr><td><strong>Application metrics</strong></td><td>The app itself</td><td>Prometheus client library in your code</td></tr>
+    <tr><td><strong>Databases, caches, queues</strong></td><td>Sidecar exporters</td><td>Exporter translates native stats to <code>/metrics</code></td></tr>
+    <tr><td><strong>Short-lived batch jobs</strong></td><td>Pushgateway</td><td>Job pushes metrics before exiting</td></tr>
+  </table>
+
+  <div class="callout insight">
+    <div class="icon">🧠</div>
+    <div class="content">
+      <strong>The Unifying Principle</strong>
+      Every single source — node-exporter, kube-state-metrics, kubelet, your app, sidecar exporters, even the Pushgateway — just <strong>serves an HTTP <code>/metrics</code> endpoint</strong>. They all sit there passively. Prometheus pulls from all of them on the same schedule, the same way. That's the elegance of the pull model — Prometheus doesn't care <em>how</em> the metrics were generated, only that they're there when it comes asking.
+    </div>
+  </div>
+
+  <!-- ===================== SECTION 13 ===================== -->
+  <h2 class="section-title" id="s13"><span class="num">13</span> The Config Pipeline — How Prometheus Knows What to Scrape</h2>
+
+  <p>Prometheus does all the pulling on its own — but it needs to <strong>know where to pull from</strong>. That knowledge lives in <code>prometheus.yml</code>, but you never write it by hand. The operator generates it from your CRDs.</p>
+
+  <h3>Where the Config Lives</h3>
+
+  <div class="architecture-diagram">
+<span class="arch-blue">ServiceMonitor</span> (CRD)  ─┐
+<span class="arch-blue">PodMonitor</span> (CRD)       ─┤                          ┌───────────────────────────┐
+<span class="arch-blue">ScrapeConfig</span> (CRD)     ─┼──► <span class="arch-orange">Prometheus Operator</span> ──►│ Secret:                   │
+<span class="arch-blue">Prometheus CR</span> (CRD)    ─┤    assembles all into     │ prometheus-kube-prometheus-│
+                        ─┘    one config file         │ stack-prometheus          │
+                                                      │                           │
+                                                      │ key: prometheus.yaml.gz   │
+                                                      └─────────────┬─────────────┘
+                                                                    │
+                                                                    │ mounted into
+                                                                    ▼
+                                                      <span class="arch-orange">Prometheus StatefulSet pod</span>
+                                                      /etc/prometheus/prometheus.yml</div>
+
+  <h3>What's Inside prometheus.yml</h3>
+
+  <p>The operator generates a config with these main sections:</p>
+
+  <pre><code><span class="keyword">global</span>:
+  <span class="keyword">scrape_interval</span>: <span class="number">15s</span>          <span class="comment"># default: pull from every target every 15s</span>
+  <span class="keyword">scrape_timeout</span>: <span class="number">10s</span>           <span class="comment"># give up if target doesn't respond in 10s</span>
+  <span class="keyword">evaluation_interval</span>: <span class="number">15s</span>      <span class="comment"># evaluate recording/alerting rules every 15s</span>
+
+<span class="comment"># Where to send alerts</span>
+<span class="keyword">alerting</span>:
+  <span class="keyword">alertmanagers</span>:
+    - <span class="keyword">static_configs</span>:
+        - <span class="keyword">targets</span>:
+            - <span class="string">alertmanager-kube-prometheus-stack-alertmanager.monitoring:9093</span>
+
+<span class="comment"># Which rule files to load (PrometheusRule CRDs end up here)</span>
+<span class="keyword">rule_files</span>:
+  - <span class="string">/etc/prometheus/rules/*.yaml</span>
+
+<span class="comment"># The big section — one entry per ServiceMonitor/PodMonitor</span>
+<span class="keyword">scrape_configs</span>:
+
+  <span class="comment"># Auto-generated from ServiceMonitor "apiserver"</span>
+  - <span class="keyword">job_name</span>: <span class="string">serviceMonitor/monitoring/apiserver</span>
+    <span class="keyword">honor_labels</span>: <span class="number">true</span>
+    <span class="keyword">kubernetes_sd_configs</span>:
+      - <span class="keyword">role</span>: endpoints
+        <span class="keyword">namespaces</span>:
+          <span class="keyword">names</span>: [<span class="string">default</span>]
+    <span class="keyword">scheme</span>: https
+    <span class="keyword">bearer_token_file</span>: <span class="string">/var/run/secrets/kubernetes.io/serviceaccount/token</span>
+    <span class="keyword">relabel_configs</span>:
+      - <span class="keyword">source_labels</span>: [<span class="label">__meta_kubernetes_service_label_component</span>]
+        <span class="keyword">regex</span>: apiserver
+        <span class="keyword">action</span>: keep
+
+  <span class="comment"># Auto-generated from ServiceMonitor "node-exporter"</span>
+  - <span class="keyword">job_name</span>: <span class="string">serviceMonitor/monitoring/node-exporter</span>
+    <span class="keyword">kubernetes_sd_configs</span>:
+      - <span class="keyword">role</span>: endpoints
+        <span class="keyword">namespaces</span>:
+          <span class="keyword">names</span>: [<span class="string">monitoring</span>]
+    <span class="keyword">relabel_configs</span>:
+      - <span class="keyword">source_labels</span>: [<span class="label">__meta_kubernetes_service_label_app</span>]
+        <span class="keyword">regex</span>: prometheus-node-exporter
+        <span class="keyword">action</span>: keep
+
+  <span class="comment"># Auto-generated from YOUR ServiceMonitor "order-service"</span>
+  - <span class="keyword">job_name</span>: <span class="string">serviceMonitor/monitoring/order-service</span>
+    <span class="keyword">kubernetes_sd_configs</span>:
+      - <span class="keyword">role</span>: endpoints
+        <span class="keyword">namespaces</span>:
+          <span class="keyword">names</span>: [<span class="string">default</span>]
+    <span class="keyword">relabel_configs</span>:
+      - <span class="keyword">source_labels</span>: [<span class="label">__meta_kubernetes_service_label_app</span>]
+        <span class="keyword">regex</span>: order-service
+        <span class="keyword">action</span>: keep
+
+  <span class="comment"># ... one entry for EVERY ServiceMonitor/PodMonitor in the cluster</span></code></pre>
+
+  <div class="callout info">
+    <div class="icon">💡</div>
+    <div class="content">
+      <strong>Key Insight</strong>
+      Each ServiceMonitor becomes one <code>scrape_configs</code> entry. The operator translates the CRD's label selectors, namespace selectors, and endpoint definitions into the native Prometheus config format. This is why you never touch <code>prometheus.yml</code> directly.
+    </div>
+  </div>
+
+  <h3>The Reload Flow — What Happens When You Create a ServiceMonitor</h3>
+
+  <div class="architecture-diagram">
+<span class="arch-blue">1.</span> You apply a ServiceMonitor         kubectl apply -f servicemonitor.yaml
+            │
+<span class="arch-blue">2.</span> Operator detects the change          (watching CRDs via K8s API)
+            │
+<span class="arch-blue">3.</span> Operator regenerates prometheus.yml  (merges ALL ServiceMonitors + PodMonitors)
+            │
+<span class="arch-blue">4.</span> Operator updates the Secret          (the mounted config file changes)
+            │
+<span class="arch-blue">5.</span> Prometheus detects file change       (watches config file via inotify)
+            │
+<span class="arch-blue">6.</span> Prometheus reloads config            (<span class="arch-green">no restart needed, no data loss</span>)
+            │
+<span class="arch-blue">7.</span> New target appears on /targets       (scraping begins on next interval)</div>
+
+  <h3>A Concrete Example — Onboarding an App</h3>
+
+  <p><strong>Step 1 — Developer deploys an app that exposes /metrics:</strong></p>
+
+  <pre><code><span class="keyword">apiVersion</span>: apps/v1
+<span class="keyword">kind</span>: Deployment
+<span class="keyword">metadata</span>:
+  <span class="keyword">name</span>: <span class="string">order-service</span>
+  <span class="keyword">namespace</span>: <span class="string">default</span>
+  <span class="keyword">labels</span>:
+    <span class="keyword">app</span>: <span class="string">order-service</span>
+<span class="keyword">spec</span>:
+  <span class="keyword">template</span>:
+    <span class="keyword">spec</span>:
+      <span class="keyword">containers</span>:
+        - <span class="keyword">name</span>: <span class="string">order-service</span>
+          <span class="keyword">ports</span>:
+            - <span class="keyword">name</span>: <span class="string">metrics</span>
+              <span class="keyword">containerPort</span>: <span class="number">8080</span>    <span class="comment"># serves /metrics here</span>
+---
+<span class="keyword">apiVersion</span>: v1
+<span class="keyword">kind</span>: Service
+<span class="keyword">metadata</span>:
+  <span class="keyword">name</span>: <span class="string">order-service</span>
+  <span class="keyword">labels</span>:
+    <span class="keyword">app</span>: <span class="string">order-service</span>
+<span class="keyword">spec</span>:
+  <span class="keyword">selector</span>:
+    <span class="keyword">app</span>: <span class="string">order-service</span>
+  <span class="keyword">ports</span>:
+    - <span class="keyword">name</span>: <span class="string">metrics</span>
+      <span class="keyword">port</span>: <span class="number">8080</span></code></pre>
+
+  <p><strong>Step 2 — Platform engineer creates a ServiceMonitor:</strong></p>
+
+  <pre><code><span class="keyword">apiVersion</span>: monitoring.coreos.com/v1
+<span class="keyword">kind</span>: ServiceMonitor
+<span class="keyword">metadata</span>:
+  <span class="keyword">name</span>: <span class="string">order-service</span>
+  <span class="keyword">namespace</span>: <span class="string">monitoring</span>
+  <span class="keyword">labels</span>:
+    <span class="keyword">release</span>: <span class="string">kube-prometheus-stack</span>    <span class="comment"># must match Prometheus CR's selector!</span>
+<span class="keyword">spec</span>:
+  <span class="keyword">namespaceSelector</span>:
+    <span class="keyword">matchNames</span>:
+      - <span class="string">default</span>
+  <span class="keyword">selector</span>:
+    <span class="keyword">matchLabels</span>:
+      <span class="keyword">app</span>: <span class="string">order-service</span>              <span class="comment"># matches the Service labels</span>
+  <span class="keyword">endpoints</span>:
+    - <span class="keyword">port</span>: <span class="string">metrics</span>                   <span class="comment"># matches the Service port name</span>
+      <span class="keyword">interval</span>: <span class="string">15s</span>
+      <span class="keyword">path</span>: <span class="string">/metrics</span></code></pre>
+
+  <p><strong>Step 3 — What happens automatically:</strong></p>
+
+  <div class="architecture-diagram">
+                ┌──────────────────────┐
+                │  <span class="arch-orange">Prometheus Operator</span>  │
+                │     (Deployment)      │
+                └───────────┬──────────┘
+                            │ 1. sees new "order-service" ServiceMonitor
+                            │ 2. updates the prometheus config Secret
+                            │ 3. Prometheus detects config change, reloads
+                            ▼
+┌──────────────────────────────────────────────────────────────┐
+│                  <span class="arch-orange">Prometheus (StatefulSet)</span>                     │
+│                                                               │
+│  scrape_configs:                                              │
+│    - job_name: serviceMonitor/monitoring/order-service         │
+│                                                               │
+│  Every 15s:                                                   │
+│    GET http://10.0.0.5:8080/metrics  ◄── order-service pod 1  │
+│    GET http://10.0.0.6:8080/metrics  ◄── order-service pod 2  │
+│    GET http://10.0.0.7:8080/metrics  ◄── order-service pod 3  │
+│    (one per pod behind the Service)                            │
+└──────────────────────────────────────────────────────────────┘</div>
+
+  <h3>Who Does What — The Responsibility Map</h3>
+
+  <table>
+    <tr><th>Actor</th><th>Responsibility</th></tr>
+    <tr><td><strong>Developer</strong></td><td>Instruments app with Prometheus client library, exposes <code>/metrics</code> endpoint</td></tr>
+    <tr><td><strong>Platform Engineer</strong></td><td>Creates ServiceMonitor/PodMonitor to register the app as a scrape target</td></tr>
+    <tr><td><strong>Prometheus Operator</strong></td><td>Watches CRDs, generates and updates <code>prometheus.yml</code> automatically</td></tr>
+    <tr><td><strong>Prometheus (StatefulSet)</strong></td><td>Does the actual HTTP GET to every target on the configured interval, stores data in TSDB</td></tr>
+  </table>
+
+  <div class="callout insight">
+    <div class="icon">🧠</div>
+    <div class="content">
+      <strong>Why This Architecture Is Powerful</strong>
+      Nobody pushes. The app just sits there. The ServiceMonitor is just a declaration of intent. The operator wires it up. Prometheus does all the work. Teams can onboard new services into monitoring with a single <code>kubectl apply</code> — no Prometheus restart, no config file editing, no ticket to the platform team.
+    </div>
+  </div>
+
+  <div class="experiment">
+    <div class="exp-header">
+      <div class="exp-icon">🧪</div>
+      <div>
+        <div class="exp-title">Experiment 13 — See the Live Config and Trace the Pipeline</div>
+        <div class="exp-subtitle">Verify how ServiceMonitors become scrape targets</div>
+      </div>
+    </div>
+
+    <h4>View the generated config</h4>
+    <pre><code><span class="comment"># Option 1: via the Prometheus UI (easiest)</span>
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
+<span class="comment"># Open http://localhost:9090/config</span>
+
+<span class="comment"># Option 2: read the Secret directly</span>
+kubectl get secret -n monitoring \
+  prometheus-kube-prometheus-stack-prometheus \
+  -o jsonpath='{.data.prometheus\.yaml\.gz}' | base64 -d | gunzip</code></pre>
+
+    <h4>Trace a ServiceMonitor to a scrape target</h4>
+    <pre><code><span class="comment"># 1. List all ServiceMonitors</span>
+kubectl get servicemonitor -n monitoring
+
+<span class="comment"># 2. Pick one and look at its selector</span>
+kubectl get servicemonitor node-exporter -n monitoring -o yaml
+
+<span class="comment"># 3. Check the Prometheus UI /config — search for the job_name</span>
+<span class="comment">#    It should match: serviceMonitor/monitoring/node-exporter</span>
+
+<span class="comment"># 4. Check /targets — the target should be UP with that job name</span>
+
+<span class="comment"># 5. Query the metric to verify data is flowing</span>
+<span class="comment">#    In the expression browser: up{job="node-exporter"}</span></code></pre>
+
+    <h4>Debug a missing target</h4>
+    <pre><code><span class="comment"># If your ServiceMonitor isn't becoming a scrape target:</span>
+
+<span class="comment"># 1. Does the ServiceMonitor have the right labels?</span>
+kubectl get prometheus -n monitoring -o jsonpath='{.items[0].spec.serviceMonitorSelector}'
+<span class="comment"># The ServiceMonitor must match this selector</span>
+
+<span class="comment"># 2. Does the Service exist and match the selector?</span>
+kubectl get svc -n default -l app=order-service
+
+<span class="comment"># 3. Is the operator seeing it? Check operator logs:</span>
+kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus-operator --tail=20
+
+<span class="comment"># 4. Did Prometheus reload? Check Prometheus logs:</span>
+kubectl logs -n monitoring prometheus-kube-prometheus-stack-prometheus-0 --tail=20 | grep "reload"</code></pre>
+
+    <p style="color:#a5d6a7;margin-top:12px;font-size:0.9em">✅ If you can trace the path from ServiceMonitor → generated config → /targets page → <code>up{job="x"} == 1</code>, the entire pipeline is working.</p>
   </div>
 
 </div>
